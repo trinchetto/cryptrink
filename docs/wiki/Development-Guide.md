@@ -6,7 +6,7 @@ This guide covers setting up a development environment and contributing to Crypt
 
 ### Prerequisites
 
-- Python 3.12 or 3.13
+- Python 3.13 or 3.14
 - [Poetry](https://python-poetry.org/) 2.0+
 - Git
 

@@ -19,7 +19,7 @@ A crypto trading agent for [Revolut X](https://www.revolut.com/business/revolut-
 
 ### Prerequisites
 
-- Python 3.12 or 3.13
+- Python 3.13 or 3.14
 - [Poetry](https://python-poetry.org/) for dependency management
 
 ### From Source

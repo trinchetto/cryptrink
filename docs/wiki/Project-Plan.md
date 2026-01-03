@@ -336,7 +336,7 @@ docker-compose.yml
 
 | Date | Decision | Rationale |
 |------|----------|-----------|
-| 2025-01-03 | Use Python 3.12 instead of 3.14 | Better ecosystem compatibility |
+| 2025-01-03 | Use Python 3.13 | Good ecosystem compatibility with latest features |
 | 2025-01-03 | Build custom framework instead of using Freqtrade/Jesse | Revolut X not supported by CCXT |
 | 2025-01-03 | Use pydantic-settings for configuration | Type-safe, env var support |
 | 2025-01-03 | Use structlog for logging | Structured, context-aware logging |

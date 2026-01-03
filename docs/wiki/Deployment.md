@@ -16,7 +16,7 @@ This guide covers deployment options for Cryptrink, from local development to pr
 ### Prerequisites
 
 ```bash
-# Python 3.12+
+# Python 3.13+
 python --version
 
 # Poetry
@@ -144,12 +144,12 @@ Best for production trading with persistent state.
 # Update system
 sudo apt update && sudo apt upgrade -y
 
-# Install Python 3.12
+# Install Python 3.13
 sudo add-apt-repository ppa:deadsnakes/ppa
-sudo apt install python3.12 python3.12-venv -y
+sudo apt install python3.13 python3.13-venv -y
 
 # Install Poetry
-curl -sSL https://install.python-poetry.org | python3.12 -
+curl -sSL https://install.python-poetry.org | python3.13 -
 
 # Clone repo
 git clone https://github.com/trinchetto/cryptrink.git
