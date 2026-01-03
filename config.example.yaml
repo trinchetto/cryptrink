@@ -1,0 +1,67 @@
+# Cryptrink Configuration Example
+# Copy this file to config.yaml and update with your settings
+
+# Execution mode: live, paper, backtest, suggest
+execution_mode: paper
+
+# Default trading strategy
+default_strategy: sma_crossover
+
+# Trading symbols (Revolut X format)
+symbols:
+  - BTC-EUR
+  - ETH-EUR
+
+# Logging level: DEBUG, INFO, WARNING, ERROR
+log_level: INFO
+
+# Revolut X API Configuration
+# IMPORTANT: Use environment variables for sensitive data in production
+# Set REVOLUTX_API_KEY and REVOLUTX_PRIVATE_KEY environment variables
+revolutx:
+  # API key from Revolut X web app (64-character string)
+  # api_key: "your-api-key-here"
+
+  # Ed25519 private key for request signing (base64 encoded)
+  # private_key: "your-private-key-here"
+
+  # API base URL
+  base_url: https://x.revolut.com/api
+
+  # Use sandbox environment for testing
+  sandbox: true
+
+# Risk Management Settings
+risk:
+  # Maximum position size as percentage of portfolio (0.1 = 10%)
+  max_position_size_pct: 0.1
+
+  # Maximum daily loss before stopping trading (0.05 = 5%)
+  max_daily_loss_pct: 0.05
+
+  # Maximum drawdown before stopping trading (0.15 = 15%)
+  max_drawdown_pct: 0.15
+
+  # Default stop loss percentage (0.02 = 2%)
+  default_stop_loss_pct: 0.02
+
+  # Default take profit percentage (0.04 = 4%)
+  default_take_profit_pct: 0.04
+
+# Database Configuration
+database:
+  # SQLite (default) - good for development and single-instance deployment
+  url: sqlite+aiosqlite:///cryptrink.db
+
+  # PostgreSQL - recommended for production
+  # url: postgresql+asyncpg://user:password@localhost:5432/cryptrink
+
+  # Echo SQL statements for debugging
+  echo: false
+
+# Notification Settings
+notifications:
+  # Telegram notifications
+  telegram_enabled: false
+  # telegram_bot_token: "your-bot-token"
+  # telegram_chat_id: "your-chat-id"

@@ -1,0 +1,184 @@
+[project]
+name = "cryptrink"
+version = "0.1.0"
+description = "A crypto trading agent for Revolut X with backtesting and multiple strategy support"
+authors = [
+    {name = "Cryptrink Team"}
+]
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12,<3.14"
+keywords = ["crypto", "trading", "bot", "revolut", "backtesting", "algorithmic-trading"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Typing :: Typed",
+]
+
+dependencies = [
+    # HTTP & Async
+    "httpx>=0.28,<1.0",
+    "websockets>=14.0,<15.0",
+
+    # Cryptography for Revolut X Ed25519 signing
+    "pynacl>=1.5,<2.0",
+
+    # Data validation & settings
+    "pydantic>=2.10,<3.0",
+    "pydantic-settings>=2.6,<3.0",
+
+    # Data processing
+    "pandas>=2.2,<3.0",
+    "numpy>=2.0,<3.0",
+
+    # Technical analysis
+    "pandas-ta>=0.3.14b0,<1.0",
+
+    # Database
+    "sqlalchemy>=2.0,<3.0",
+    "aiosqlite>=0.20,<1.0",
+
+    # CLI
+    "typer>=0.15,<1.0",
+    "rich>=13.9,<14.0",
+
+    # Logging
+    "structlog>=24.4,<25.0",
+
+    # Configuration
+    "pyyaml>=6.0,<7.0",
+
+    # Scheduling
+    "apscheduler>=3.10,<4.0",
+]
+
+[project.optional-dependencies]
+telegram = [
+    "python-telegram-bot>=21.0,<22.0",
+]
+all = [
+    "python-telegram-bot>=21.0,<22.0",
+]
+
+[project.scripts]
+cryptrink = "cryptrink.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/trinchetto/cryptrink"
+Documentation = "https://github.com/trinchetto/cryptrink/wiki"
+Repository = "https://github.com/trinchetto/cryptrink"
+Issues = "https://github.com/trinchetto/cryptrink/issues"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+packages = [{include = "cryptrink", from = "src"}]
+
+[tool.poetry.group.dev.dependencies]
+# Testing
+pytest = "^8.3"
+pytest-asyncio = "^0.25"
+pytest-cov = "^6.0"
+respx = "^0.22"
+pytest-mock = "^3.14"
+
+# Linting & Formatting
+ruff = "^0.8"
+mypy = "^1.14"
+pre-commit = "^4.0"
+
+# Type stubs
+pandas-stubs = "^2.2"
+types-pyyaml = "^6.0"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "ARG",    # flake8-unused-arguments
+    "SIM",    # flake8-simplify
+    "TCH",    # flake8-type-checking
+    "PTH",    # flake8-use-pathlib
+    "ERA",    # eradicate
+    "RUF",    # Ruff-specific rules
+    "ASYNC",  # flake8-async
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "B008",   # do not perform function calls in argument defaults
+    "B027",   # empty method in abstract class (intentional for optional override)
+    "ARG002", # unused method argument (intentional for interface definition)
+    "SIM103", # return condition directly (explicit if/return is more readable)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["cryptrink"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = [
+    "pandas_ta.*",
+    "apscheduler.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+]
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests",
+    "slow: Slow tests",
+]
+
+[tool.coverage.run]
+source = ["src/cryptrink"]
+branch = true
+omit = ["*/tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@abstractmethod",
+]
