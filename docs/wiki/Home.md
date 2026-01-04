@@ -48,7 +48,7 @@ Cryptrink is a crypto trading agent designed for [Revolut X](https://www.revolut
 
 | Component | Technology |
 |-----------|------------|
-| Language | Python 3.12+ |
+| Language | Python 3.13+ |
 | Package Manager | Poetry |
 | HTTP Client | httpx |
 | Data Processing | pandas, numpy |

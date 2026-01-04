@@ -42,7 +42,6 @@ files = [
 
 [package.dependencies]
 idna = ">=2.8"
-typing_extensions = {version = ">=4.5", markers = "python_version < \"3.13\""}
 
 [package.extras]
 trio = ["trio (>=0.31.0) ; python_version < \"3.10\"", "trio (>=0.32.0) ; python_version >= \"3.10\""]
@@ -1966,5 +1965,5 @@ telegram = ["python-telegram-bot"]
 
 [metadata]
 lock-version = "2.1"
-python-versions = ">=3.12,<3.14"
-content-hash = "638289641ba58a67d3f61208268900e3ed319755a703a1ec4496de7bf041ca29"
+python-versions = ">=3.13,<3.15"
+content-hash = "dbb3c1323ce3d5803928b9e15892b90e3c0258b0d9e7222ff545e97fbd927587"
