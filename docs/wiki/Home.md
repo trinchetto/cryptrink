@@ -41,7 +41,7 @@ Cryptrink is a crypto trading agent designed for [Revolut X](https://www.revolut
 ### Planned
 - Backtesting engine
 - Risk management module
-- Telegram notifications
+- Discord notifications
 - Performance metrics and reporting
 
 ## Technology Stack

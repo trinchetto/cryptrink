@@ -324,12 +324,11 @@ log_format: json  # Enable JSON logging
 
 ### Alerts
 
-Configure Telegram notifications:
+Configure Discord notifications:
 ```yaml
 notifications:
-  telegram_enabled: true
-  telegram_bot_token: "your-bot-token"
-  telegram_chat_id: "your-chat-id"
+  discord_enabled: true
+  discord_webhook_url: "https://discord.com/api/webhooks/your-webhook-url"
 ```
 
 ---

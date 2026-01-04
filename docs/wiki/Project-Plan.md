@@ -270,7 +270,7 @@ Complete the CLI interface and add notifications.
   - [ ] `status` - Show current status
   - [ ] `history` - View trade history
 - [ ] Trade suggestion output (table/JSON)
-- [ ] Telegram notifications:
+- [ ] Discord notifications:
   - [ ] Trade execution alerts
   - [ ] Daily summary
   - [ ] Error notifications
@@ -279,7 +279,7 @@ Complete the CLI interface and add notifications.
 ### Files to Create
 ```
 src/cryptrink/notifications/
-└── telegram.py        # Telegram bot integration
+└── discord.py        # Discord webhook integration
 ```
 
 ---

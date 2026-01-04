@@ -61,7 +61,6 @@ database:
 
 # Notification Settings
 notifications:
-  # Telegram notifications
-  telegram_enabled: false
-  # telegram_bot_token: "your-bot-token"
-  # telegram_chat_id: "your-chat-id"
+  # Discord notifications
+  discord_enabled: false
+  # discord_webhook_url: "https://discord.com/api/webhooks/your-webhook-url"

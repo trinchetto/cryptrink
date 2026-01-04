@@ -13,13 +13,13 @@ A crypto trading agent for [Revolut X](https://www.revolut.com/business/revolut-
   - `backtest`: Test against historical data
   - `suggest`: Generate trade suggestions without executing
 - **Risk Management**: Position sizing, stop-loss, take-profit, and circuit breakers
-- **Notifications**: Telegram alerts for trade execution and signals
+- **Notifications**: Discord alerts for trade execution and signals
 
 ## Installation
 
 ### Prerequisites
 
-- Python 3.12 or 3.13
+- Python 3.13
 - [Poetry](https://python-poetry.org/) for dependency management
 
 ### From Source
@@ -32,8 +32,8 @@ cd cryptrink
 # Install dependencies
 poetry install
 
-# Install with Telegram support
-poetry install --extras telegram
+# Install with Discord support
+poetry install --extras discord
 
 # Activate the virtual environment
 poetry shell

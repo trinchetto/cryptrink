@@ -94,9 +94,8 @@ class NotificationSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="NOTIFY_")
 
-    telegram_enabled: bool = Field(default=False, description="Enable Telegram notifications")
-    telegram_bot_token: SecretStr = Field(default=SecretStr(""), description="Telegram bot token")
-    telegram_chat_id: str = Field(default="", description="Telegram chat ID")
+    discord_enabled: bool = Field(default=False, description="Enable Discord notifications")
+    discord_webhook_url: SecretStr = Field(default=SecretStr(""), description="Discord webhook URL")
 
 
 class Settings(BaseSettings):

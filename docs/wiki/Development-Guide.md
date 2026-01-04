@@ -58,7 +58,7 @@ cryptrink/
 │   ├── signals/            # Signal generation
 │   ├── risk/               # Risk management
 │   ├── backtest/           # Backtesting engine
-│   └── notifications/      # Alerts (Telegram)
+│   └── notifications/      # Alerts (Discord)
 ├── tests/                  # Test suite
 │   ├── conftest.py         # Pytest fixtures
 │   ├── unit/               # Unit tests
