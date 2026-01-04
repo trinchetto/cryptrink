@@ -250,13 +250,18 @@ class RevolutXExchange(BaseExchange):
         """
         # Parse response body
         try:
-            data: dict[str, Any] = response.json()
+            raw_data = response.json()
+            # Handle both dict and list responses
+            if isinstance(raw_data, list):
+                data: dict[str, Any] = {"data": raw_data}
+            else:
+                data = dict(raw_data)
         except json.JSONDecodeError:
             data = {"raw": response.text}
 
         # Success
         if 200 <= response.status_code < 300:
-            return dict(data)
+            return data
 
         # Error handling
         error_message = data.get("message", data.get("error", str(data)))
@@ -355,7 +360,8 @@ class RevolutXExchange(BaseExchange):
         )
 
         trades = []
-        for trade_data in data.get("trades", data if isinstance(data, list) else []):
+        trades_list = data.get("trades") or data.get("data") or []
+        for trade_data in trades_list:
             trades.append(
                 Trade(
                     id=str(trade_data.get("id", "")),
@@ -374,7 +380,8 @@ class RevolutXExchange(BaseExchange):
         data = await self._request("GET", "/symbols", authenticated=False)
 
         symbols = []
-        for symbol_data in data.get("symbols", data if isinstance(data, list) else []):
+        symbols_list = data.get("symbols") or data.get("data") or []
+        for symbol_data in symbols_list:
             if isinstance(symbol_data, str):
                 # Convert BTC/EUR -> BTC-EUR
                 symbols.append(symbol_data.replace("/", "-"))
@@ -393,7 +400,8 @@ class RevolutXExchange(BaseExchange):
         data = await self._request("GET", "/balances")
 
         balances = {}
-        for balance_data in data.get("balances", data if isinstance(data, list) else []):
+        balances_list = data.get("balances") or data.get("data") or []
+        for balance_data in balances_list:
             currency = balance_data.get("currency", balance_data.get("asset", ""))
             balances[currency] = Balance(
                 currency=currency,
@@ -468,7 +476,8 @@ class RevolutXExchange(BaseExchange):
         data = await self._request("GET", "/orders/active", params=params if params else None)
 
         orders = []
-        for order_data in data.get("orders", data if isinstance(data, list) else []):
+        orders_list = data.get("orders") or data.get("data") or []
+        for order_data in orders_list:
             orders.append(self._parse_order(order_data, symbol or ""))
 
         return orders
@@ -486,7 +495,8 @@ class RevolutXExchange(BaseExchange):
         data = await self._request("GET", "/orders/history", params=params)
 
         orders = []
-        for order_data in data.get("orders", data if isinstance(data, list) else []):
+        orders_list = data.get("orders") or data.get("data") or []
+        for order_data in orders_list:
             orders.append(self._parse_order(order_data, symbol or ""))
 
         return orders
