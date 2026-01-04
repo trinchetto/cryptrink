@@ -3,7 +3,7 @@ name = "cryptrink"
 version = "0.1.0"
 description = "A crypto trading agent for Revolut X with backtesting and multiple strategy support"
 authors = [
-    {name = "Cryptrink Team"}
+    {name = "Marco Trincavelli"}
 ]
 readme = "README.md"
 license = "MIT"
