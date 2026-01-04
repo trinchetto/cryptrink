@@ -29,6 +29,7 @@ dependencies = [
 
     # Cryptography for Revolut X Ed25519 signing
     "pynacl>=1.5,<2.0",
+    "cryptography>=44.0,<45.0",
 
     # Data validation & settings
     "pydantic>=2.10,<3.0",
