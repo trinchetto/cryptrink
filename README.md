@@ -1,5 +1,8 @@
 # Cryptrink
 
+![CI](https://github.com/trinchetto/cryptrink/actions/workflows/ci.yml/badge.svg)
+![Coverage](.github/badges/coverage.svg)
+
 A crypto trading agent for [Revolut X](https://www.revolut.com/business/revolut-x/) with backtesting and multiple strategy support.
 
 ## Features
