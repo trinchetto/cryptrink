@@ -38,11 +38,10 @@ jobs:
         if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
         run: poetry install --no-interaction
 
-      - name: Check code formatting with Ruff
-        run: poetry run ruff format --check src/ tests/
-
-      - name: Lint with Ruff
-        run: poetry run ruff check src/ tests/
+      - name: Lint and check formatting with Ruff
+        run: |
+          poetry run ruff check src/ tests/
+          poetry run ruff format --check src/ tests/
 
       - name: Type check with mypy
         run: poetry run mypy src/
