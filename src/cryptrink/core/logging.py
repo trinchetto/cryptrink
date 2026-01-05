@@ -52,9 +52,7 @@ def setup_logging(level: str = "INFO", json_format: bool = False) -> None:
 
     structlog.configure(
         processors=processors,
-        wrapper_class=structlog.make_filtering_bound_logger(
-            getattr(logging, level.upper())
-        ),
+        wrapper_class=structlog.make_filtering_bound_logger(getattr(logging, level.upper())),
         context_class=dict,
         logger_factory=structlog.PrintLoggerFactory(),
         cache_logger_on_first_use=True,
