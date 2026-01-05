@@ -132,9 +132,7 @@ class TestEndpointRateLimiter:
     @pytest.fixture
     def endpoint_limiter(self) -> EndpointRateLimiter:
         """Create an endpoint rate limiter."""
-        return EndpointRateLimiter(
-            default_config=RateLimitConfig(max_requests=10)
-        )
+        return EndpointRateLimiter(default_config=RateLimitConfig(max_requests=10))
 
     def test_default_limiter_for_unknown_endpoint(
         self, endpoint_limiter: EndpointRateLimiter
@@ -154,9 +152,7 @@ class TestEndpointRateLimiter:
         assert limiter.config.max_requests == 5
 
     @pytest.mark.asyncio
-    async def test_acquire_creates_limiter(
-        self, endpoint_limiter: EndpointRateLimiter
-    ) -> None:
+    async def test_acquire_creates_limiter(self, endpoint_limiter: EndpointRateLimiter) -> None:
         """Test that acquire creates limiter for new endpoint."""
         await endpoint_limiter.acquire("new_endpoint")
         limiter = endpoint_limiter.get_limiter("new_endpoint")

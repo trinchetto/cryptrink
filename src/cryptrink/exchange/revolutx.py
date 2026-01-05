@@ -173,7 +173,9 @@ class RevolutXExchange(BaseExchange):
             url = f"{url}?{query_string}"
 
         # Rate limiting
-        rate_limiter = self._rate_limiter.get_limiter(endpoint.split("/")[1] if "/" in endpoint else "default")
+        rate_limiter = self._rate_limiter.get_limiter(
+            endpoint.split("/")[1] if "/" in endpoint else "default"
+        )
         await self._rate_limiter.acquire(endpoint)
 
         # Sign request if authenticated
@@ -212,6 +214,7 @@ class RevolutXExchange(BaseExchange):
                     delay = rate_limiter.calculate_backoff_delay(attempt)
                     logger.warning("request_retry", error=str(e), delay=delay)
                     import asyncio
+
                     await asyncio.sleep(delay)
 
             except httpx.RequestError as e:
@@ -221,6 +224,7 @@ class RevolutXExchange(BaseExchange):
                     delay = rate_limiter.calculate_backoff_delay(attempt)
                     logger.warning("request_retry", error=str(e), delay=delay)
                     import asyncio
+
                     await asyncio.sleep(delay)
 
             except RateLimitError as e:
@@ -230,6 +234,7 @@ class RevolutXExchange(BaseExchange):
                     delay = rate_limiter.calculate_backoff_delay(attempt, e.retry_after)
                     logger.warning("rate_limit_retry", error=str(e), delay=delay)
                     import asyncio
+
                     await asyncio.sleep(delay)
 
         if last_error:
@@ -366,10 +371,14 @@ class RevolutXExchange(BaseExchange):
                 Trade(
                     id=str(trade_data.get("id", "")),
                     symbol=symbol,
-                    side=OrderSide.BUY if trade_data.get("side", "").lower() == "buy" else OrderSide.SELL,
+                    side=OrderSide.BUY
+                    if trade_data.get("side", "").lower() == "buy"
+                    else OrderSide.SELL,
                     price=Decimal(str(trade_data.get("price", "0"))),
                     quantity=Decimal(str(trade_data.get("qty", trade_data.get("quantity", "0")))),
-                    timestamp=self._parse_timestamp(trade_data.get("timestamp", trade_data.get("created_at", ""))),
+                    timestamp=self._parse_timestamp(
+                        trade_data.get("timestamp", trade_data.get("created_at", ""))
+                    ),
                 )
             )
 
@@ -534,7 +543,9 @@ class RevolutXExchange(BaseExchange):
             quantity=Decimal(str(data.get("qty", data.get("quantity", "0")))),
             filled_quantity=Decimal(str(data.get("filled_qty", data.get("filled_quantity", "0")))),
             price=Decimal(str(data.get("price", "0"))) if data.get("price") else None,
-            stop_price=Decimal(str(data.get("stop_price", "0"))) if data.get("stop_price") else None,
+            stop_price=Decimal(str(data.get("stop_price", "0")))
+            if data.get("stop_price")
+            else None,
             created_at=self._parse_timestamp(data.get("created_at", data.get("timestamp", ""))),
             updated_at=self._parse_timestamp(data.get("updated_at", data.get("timestamp", ""))),
             trades=trades,

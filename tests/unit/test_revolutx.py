@@ -323,7 +323,11 @@ class TestAccountEndpoints:
                 json={
                     "balances": [
                         {"currency": "EUR", "available": "10000.00", "locked": "500.00"},
-                        {"currency": "BTC", "available": "0.5", "reserved": "0.1"},  # alternate field
+                        {
+                            "currency": "BTC",
+                            "available": "0.5",
+                            "reserved": "0.1",
+                        },  # alternate field
                     ]
                 },
             )

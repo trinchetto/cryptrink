@@ -26,13 +26,10 @@ from cryptrink.exchange.rate_limiter import (
 from cryptrink.exchange.revolutx import RevolutXExchange
 
 __all__ = [
-    # Auth
-    "RevolutXAuth",
-    "SignedRequest",
-    # Base classes and types
     "AuthenticationError",
     "Balance",
     "BaseExchange",
+    "EndpointRateLimiter",
     "ExchangeError",
     "InsufficientFundsError",
     "Order",
@@ -41,14 +38,13 @@ __all__ = [
     "OrderSide",
     "OrderStatus",
     "OrderType",
+    "RateLimitConfig",
     "RateLimitError",
+    "RateLimiter",
+    "RevolutXAuth",
+    "RevolutXExchange",
+    "SignedRequest",
     "Ticker",
     "Trade",
-    # Rate limiting
-    "EndpointRateLimiter",
-    "RateLimitConfig",
-    "RateLimiter",
     "with_retry",
-    # Revolut X
-    "RevolutXExchange",
 ]
