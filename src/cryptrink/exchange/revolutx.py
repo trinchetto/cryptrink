@@ -38,22 +38,22 @@ from cryptrink.exchange.rate_limiter import (
 
 logger = get_logger(__name__)
 
-# Revolut X API base URLs
-SANDBOX_BASE_URL = "https://sandbox-x.revolut.com/api/1.0"
-PRODUCTION_BASE_URL = "https://x.revolut.com/api/1.0"
+# Revolut X API base URL
+# Note: Revolut X does not have a separate sandbox environment
+# The base URL already includes the /api/1.0/ prefix
+DEFAULT_BASE_URL = "https://revx.revolut.com/api/1.0"
 
 
 class RevolutXExchange(BaseExchange):
     """Revolut X cryptocurrency exchange client.
 
     Implements the BaseExchange interface for trading on Revolut X.
-    Supports both sandbox (testing) and production environments.
+    Note: Revolut X does not have a separate sandbox environment.
 
     Example:
         async with RevolutXExchange(
             api_key="your-key",
             private_key_base64="your-private-key",
-            sandbox=True,
         ) as exchange:
             ticker = await exchange.get_ticker("BTC-EUR")
             print(f"BTC price: {ticker.last}")
@@ -63,21 +63,21 @@ class RevolutXExchange(BaseExchange):
         self,
         api_key: str,
         private_key_base64: str,
-        sandbox: bool = True,
         timeout: float = 30.0,
+        base_url: str | None = None,
     ) -> None:
         """Initialize the Revolut X client.
 
         Args:
             api_key: Revolut X API key.
             private_key_base64: Base64-encoded Ed25519 private key.
-            sandbox: Use sandbox environment if True.
             timeout: Request timeout in seconds.
+            base_url: Optional custom base URL (overrides default).
         """
         self._api_key = api_key
-        self._sandbox = sandbox
         self._timeout = timeout
-        self._base_url = SANDBOX_BASE_URL if sandbox else PRODUCTION_BASE_URL
+        # Use custom base_url if provided, otherwise use default
+        self._base_url = base_url or DEFAULT_BASE_URL
 
         # Initialize authentication
         self._auth = RevolutXAuth.from_base64_key(api_key, private_key_base64)
@@ -107,8 +107,11 @@ class RevolutXExchange(BaseExchange):
 
     @property
     def is_sandbox(self) -> bool:
-        """Whether using sandbox environment."""
-        return self._sandbox
+        """Whether using sandbox environment.
+
+        Note: Revolut X does not have a sandbox environment, so this always returns False.
+        """
+        return False
 
     async def connect(self) -> None:
         """Establish connection to the exchange."""
@@ -122,7 +125,7 @@ class RevolutXExchange(BaseExchange):
                 "Accept": "application/json",
             },
         )
-        logger.info("exchange_connected", exchange=self.name, sandbox=self._sandbox)
+        logger.info("exchange_connected", exchange=self.name)
 
     async def close(self) -> None:
         """Close connection to the exchange."""
@@ -163,14 +166,18 @@ class RevolutXExchange(BaseExchange):
         client = self._ensure_connected()
 
         # Build path and query
-        path = f"/api/1.0{endpoint}"
+        # Note: base_url includes /api/1.0, so endpoint should be relative (e.g., /balances)
+        # But signature needs the full path including /api/1.0
         query_string = urlencode(params) if params else ""
         body_string = json.dumps(body, separators=(",", ":")) if body else ""
 
-        # Build full URL
+        # Build full URL for HTTP request
         url = f"{self._base_url}{endpoint}"
         if query_string:
             url = f"{url}?{query_string}"
+
+        # Build full path for signature (must include /api/1.0 prefix)
+        signature_path = f"/api/1.0{endpoint}"
 
         # Rate limiting
         rate_limiter = self._rate_limiter.get_limiter(
@@ -181,7 +188,7 @@ class RevolutXExchange(BaseExchange):
         # Sign request if authenticated
         headers: dict[str, str] = {}
         if authenticated:
-            signed = self._auth.sign_request(method, path, query_string, body_string)
+            signed = self._auth.sign_request(method, signature_path, query_string, body_string)
             headers.update(signed.to_headers())
 
         # Make request with retries
@@ -297,53 +304,69 @@ class RevolutXExchange(BaseExchange):
     # -------------------------------------------------------------------------
 
     async def get_ticker(self, symbol: str) -> Ticker:
-        """Get current ticker for a symbol."""
-        # Convert symbol format: BTC-EUR -> BTC/EUR
-        api_symbol = symbol.replace("-", "/")
+        """Get current ticker for a symbol.
 
+        Note: This uses the all trades endpoint to get the latest trade price.
+        """
+        # Use all trades endpoint to get ticker-like data
         data = await self._request(
             "GET",
-            "/ticker",
-            params={"symbol": api_symbol},
-            authenticated=False,
+            f"/trades/all/{symbol}",
+            authenticated=True,
         )
 
+        # Extract latest trade data to build ticker
+        trades = data.get("data", [])
+        if not trades:
+            # Return zero ticker if no trades
+            return Ticker(
+                symbol=symbol,
+                bid=None,
+                ask=None,
+                last=Decimal("0"),
+                volume_24h=None,
+                high_24h=None,
+                low_24h=None,
+                timestamp=datetime.now(UTC),
+            )
+
+        # Get latest trade (first in list)
+        latest = trades[0]
         return Ticker(
             symbol=symbol,
-            bid=Decimal(str(data.get("bid", "0"))),
-            ask=Decimal(str(data.get("ask", "0"))),
-            last=Decimal(str(data.get("last", data.get("price", "0")))),
-            volume_24h=Decimal(str(data.get("volume", data.get("volume_24h", "0")))),
-            high_24h=Decimal(str(data.get("high", data.get("high_24h", "0")))),
-            low_24h=Decimal(str(data.get("low", data.get("low_24h", "0")))),
-            timestamp=datetime.now(UTC),
+            bid=None,  # Not available from trades
+            ask=None,  # Not available from trades
+            last=Decimal(str(latest.get("p", "0"))),  # 'p' is price
+            volume_24h=None,  # Not available from single trade
+            high_24h=None,  # Not available from single trade
+            low_24h=None,  # Not available from single trade
+            timestamp=self._parse_timestamp(latest.get("tdt", "")),  # 'tdt' is trade datetime
         )
 
     async def get_orderbook(self, symbol: str, depth: int = 20) -> OrderBook:
         """Get order book for a symbol."""
-        api_symbol = symbol.replace("-", "/")
-
         data = await self._request(
             "GET",
-            "/orderbook",
-            params={"symbol": api_symbol, "depth": depth},
+            f"/public/order-book/{symbol}",
             authenticated=False,
         )
 
+        # Parse order book data - 'p' is price, 'q' is quantity
+        order_book_data = data.get("data", {})
         bids = tuple(
             OrderBookLevel(
-                price=Decimal(str(level[0])),
-                quantity=Decimal(str(level[1])),
+                price=Decimal(str(level.get("p", "0"))),
+                quantity=Decimal(str(level.get("q", "0"))),
             )
-            for level in data.get("bids", [])
+            for level in order_book_data.get("bids", [])[:depth]
         )
 
         asks = tuple(
             OrderBookLevel(
-                price=Decimal(str(level[0])),
-                quantity=Decimal(str(level[1])),
+                price=Decimal(str(level.get("p", "0"))),
+                quantity=Decimal(str(level.get("q", "0"))),
             )
-            for level in data.get("asks", [])
+            for level in order_book_data.get("asks", [])[:depth]
         )
 
         return OrderBook(
@@ -355,30 +378,27 @@ class RevolutXExchange(BaseExchange):
 
     async def get_recent_trades(self, symbol: str, limit: int = 100) -> list[Trade]:
         """Get recent trades for a symbol."""
-        api_symbol = symbol.replace("-", "/")
-
         data = await self._request(
             "GET",
-            "/trades",
-            params={"symbol": api_symbol, "limit": limit},
-            authenticated=False,
+            f"/trades/all/{symbol}",
+            params={"limit": limit} if limit else None,
+            authenticated=True,
         )
 
         trades = []
-        trades_list = data.get("trades") or data.get("data") or []
+        trades_list = data.get("data", [])
         for trade_data in trades_list:
+            # API uses: 'tid' for id, 'p' for price, 'q' for quantity, 'tdt' for timestamp, 's' for side
+            side_str = str(trade_data.get("s", "BUY")).upper()
+            side = OrderSide.BUY if side_str == "BUY" else OrderSide.SELL
             trades.append(
                 Trade(
-                    id=str(trade_data.get("id", "")),
+                    id=str(trade_data.get("tid", "")),
                     symbol=symbol,
-                    side=OrderSide.BUY
-                    if trade_data.get("side", "").lower() == "buy"
-                    else OrderSide.SELL,
-                    price=Decimal(str(trade_data.get("price", "0"))),
-                    quantity=Decimal(str(trade_data.get("qty", trade_data.get("quantity", "0")))),
-                    timestamp=self._parse_timestamp(
-                        trade_data.get("timestamp", trade_data.get("created_at", ""))
-                    ),
+                    side=side,
+                    price=Decimal(str(trade_data.get("p", "0"))),
+                    quantity=Decimal(str(trade_data.get("q", "0"))),
+                    timestamp=self._parse_timestamp(trade_data.get("tdt", "")),
                 )
             )
 
@@ -386,17 +406,14 @@ class RevolutXExchange(BaseExchange):
 
     async def get_symbols(self) -> list[str]:
         """Get list of available trading symbols."""
-        data = await self._request("GET", "/symbols", authenticated=False)
+        data = await self._request("GET", "/configuration/pairs", authenticated=True)
 
+        # API returns dict with symbol keys like "LINK/USD", "BTC/USD" etc
         symbols = []
-        symbols_list = data.get("symbols") or data.get("data") or []
-        for symbol_data in symbols_list:
-            if isinstance(symbol_data, str):
-                # Convert BTC/EUR -> BTC-EUR
-                symbols.append(symbol_data.replace("/", "-"))
-            elif isinstance(symbol_data, dict):
-                symbol = symbol_data.get("symbol") or symbol_data.get("name") or ""
-                symbols.append(symbol.replace("/", "-"))
+        if isinstance(data, dict):
+            for symbol_key in data:
+                # Convert / to - for internal format
+                symbols.append(symbol_key.replace("/", "-"))
 
         return symbols
 
@@ -499,12 +516,12 @@ class RevolutXExchange(BaseExchange):
         """Get order history."""
         params: dict[str, Any] = {"limit": limit}
         if symbol:
-            params["symbol"] = symbol.replace("-", "/")
+            params["symbols"] = symbol  # Note: API uses 'symbols' not 'symbol'
 
-        data = await self._request("GET", "/orders/history", params=params)
+        data = await self._request("GET", "/orders/historical", params=params)
 
         orders = []
-        orders_list = data.get("orders") or data.get("data") or []
+        orders_list = data.get("data", [])
         for order_data in orders_list:
             orders.append(self._parse_order(order_data, symbol or ""))
 

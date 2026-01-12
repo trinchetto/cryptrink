@@ -42,12 +42,12 @@ class Ticker:
     """Market ticker data."""
 
     symbol: str
-    bid: Decimal
-    ask: Decimal
+    bid: Decimal | None
+    ask: Decimal | None
     last: Decimal
-    volume_24h: Decimal
-    high_24h: Decimal
-    low_24h: Decimal
+    volume_24h: Decimal | None
+    high_24h: Decimal | None
+    low_24h: Decimal | None
     timestamp: datetime
 
 

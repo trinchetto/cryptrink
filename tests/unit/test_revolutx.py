@@ -19,9 +19,12 @@ from cryptrink.exchange.base import (
     RateLimitError,
 )
 from cryptrink.exchange.revolutx import (
-    SANDBOX_BASE_URL,
+    DEFAULT_BASE_URL,
     RevolutXExchange,
 )
+
+# For tests, use the same base URL
+TEST_BASE_URL = DEFAULT_BASE_URL
 
 
 @pytest.fixture
@@ -42,7 +45,6 @@ def exchange(private_key_base64: str) -> RevolutXExchange:
     return RevolutXExchange(
         api_key="test-api-key",
         private_key_base64=private_key_base64,
-        sandbox=True,
         timeout=10.0,
     )
 
@@ -55,16 +57,7 @@ class TestRevolutXExchangeProperties:
         assert exchange.name == "revolut_x"
 
     def test_is_sandbox(self, exchange: RevolutXExchange) -> None:
-        """Test sandbox property."""
-        assert exchange.is_sandbox is True
-
-    def test_production_mode(self, private_key_base64: str) -> None:
-        """Test production mode configuration."""
-        exchange = RevolutXExchange(
-            api_key="test-key",
-            private_key_base64=private_key_base64,
-            sandbox=False,
-        )
+        """Test sandbox property (always False for Revolut X)."""
         assert exchange.is_sandbox is False
 
 
@@ -116,16 +109,19 @@ class TestMarketDataEndpoints:
     @respx.mock
     async def test_get_ticker(self, exchange: RevolutXExchange) -> None:
         """Test getting ticker data."""
-        respx.get(f"{SANDBOX_BASE_URL}/ticker").mock(
+        respx.get(f"{TEST_BASE_URL}/trades/all/BTC-EUR").mock(
             return_value=httpx.Response(
                 200,
                 json={
-                    "bid": "42000.00",
-                    "ask": "42010.00",
-                    "last": "42005.00",
-                    "volume": "1234.56",
-                    "high": "43000.00",
-                    "low": "41000.00",
+                    "data": [
+                        {
+                            "p": "42005.00",
+                            "q": "1234.56",
+                            "tdt": "2024-01-15T10:30:00Z",
+                            "tid": "trade1",
+                            "s": "BUY",
+                        }
+                    ]
                 },
             )
         )
@@ -134,27 +130,25 @@ class TestMarketDataEndpoints:
             ticker = await exchange.get_ticker("BTC-EUR")
 
         assert ticker.symbol == "BTC-EUR"
-        assert ticker.bid == Decimal("42000.00")
-        assert ticker.ask == Decimal("42010.00")
         assert ticker.last == Decimal("42005.00")
-        assert ticker.volume_24h == Decimal("1234.56")
-        assert ticker.high_24h == Decimal("43000.00")
-        assert ticker.low_24h == Decimal("41000.00")
 
     @pytest.mark.asyncio
     @respx.mock
     async def test_get_ticker_alternate_field_names(self, exchange: RevolutXExchange) -> None:
         """Test ticker parsing with alternate field names."""
-        respx.get(f"{SANDBOX_BASE_URL}/ticker").mock(
+        respx.get(f"{TEST_BASE_URL}/trades/all/ETH-EUR").mock(
             return_value=httpx.Response(
                 200,
                 json={
-                    "bid": "42000.00",
-                    "ask": "42010.00",
-                    "price": "42005.00",  # alternate for 'last'
-                    "volume_24h": "1234.56",  # alternate for 'volume'
-                    "high_24h": "43000.00",  # alternate for 'high'
-                    "low_24h": "41000.00",  # alternate for 'low'
+                    "data": [
+                        {
+                            "p": "42005.00",
+                            "q": "1234.56",
+                            "tdt": "2024-01-15T10:30:00Z",
+                            "tid": "trade2",
+                            "s": "SELL",
+                        }
+                    ]
                 },
             )
         )
@@ -163,24 +157,25 @@ class TestMarketDataEndpoints:
             ticker = await exchange.get_ticker("ETH-EUR")
 
         assert ticker.last == Decimal("42005.00")
-        assert ticker.volume_24h == Decimal("1234.56")
 
     @pytest.mark.asyncio
     @respx.mock
     async def test_get_orderbook(self, exchange: RevolutXExchange) -> None:
         """Test getting order book."""
-        respx.get(f"{SANDBOX_BASE_URL}/orderbook").mock(
+        respx.get(f"{TEST_BASE_URL}/public/order-book/BTC-EUR").mock(
             return_value=httpx.Response(
                 200,
                 json={
-                    "bids": [
-                        ["42000.00", "1.5"],
-                        ["41990.00", "2.0"],
-                    ],
-                    "asks": [
-                        ["42010.00", "1.0"],
-                        ["42020.00", "2.5"],
-                    ],
+                    "data": {
+                        "bids": [
+                            {"p": "42000.00", "q": "1.5"},
+                            {"p": "41990.00", "q": "2.0"},
+                        ],
+                        "asks": [
+                            {"p": "42010.00", "q": "1.0"},
+                            {"p": "42020.00", "q": "2.5"},
+                        ],
+                    }
                 },
             )
         )
@@ -200,24 +195,24 @@ class TestMarketDataEndpoints:
     @respx.mock
     async def test_get_recent_trades(self, exchange: RevolutXExchange) -> None:
         """Test getting recent trades."""
-        respx.get(f"{SANDBOX_BASE_URL}/trades").mock(
+        respx.get(f"{TEST_BASE_URL}/trades/all/BTC-EUR").mock(
             return_value=httpx.Response(
                 200,
                 json={
-                    "trades": [
+                    "data": [
                         {
-                            "id": "trade1",
-                            "side": "buy",
-                            "price": "42000.00",
-                            "qty": "0.5",
-                            "timestamp": "2024-01-15T10:30:00Z",
+                            "tid": "trade1",
+                            "s": "BUY",
+                            "p": "42000.00",
+                            "q": "0.5",
+                            "tdt": "2024-01-15T10:30:00Z",
                         },
                         {
-                            "id": "trade2",
-                            "side": "sell",
-                            "price": "41990.00",
-                            "quantity": "1.0",  # alternate field name
-                            "created_at": "2024-01-15T10:29:00Z",  # alternate timestamp
+                            "tid": "trade2",
+                            "s": "SELL",
+                            "p": "41990.00",
+                            "q": "1.0",
+                            "tdt": "2024-01-15T10:29:00Z",
                         },
                     ]
                 },
@@ -240,18 +235,20 @@ class TestMarketDataEndpoints:
     @respx.mock
     async def test_get_recent_trades_list_response(self, exchange: RevolutXExchange) -> None:
         """Test getting trades when response is a list."""
-        respx.get(f"{SANDBOX_BASE_URL}/trades").mock(
+        respx.get(f"{TEST_BASE_URL}/trades/all/BTC-EUR").mock(
             return_value=httpx.Response(
                 200,
-                json=[
-                    {
-                        "id": "trade1",
-                        "side": "buy",
-                        "price": "42000.00",
-                        "qty": "0.5",
-                        "timestamp": 1705315800000,  # Unix timestamp milliseconds
-                    },
-                ],
+                json={
+                    "data": [
+                        {
+                            "tid": "trade1",
+                            "s": "BUY",
+                            "p": "42000.00",
+                            "q": "0.5",
+                            "tdt": 1705315800000,  # Unix timestamp milliseconds
+                        },
+                    ]
+                },
             )
         )
 
@@ -265,15 +262,13 @@ class TestMarketDataEndpoints:
     @respx.mock
     async def test_get_symbols(self, exchange: RevolutXExchange) -> None:
         """Test getting available symbols."""
-        respx.get(f"{SANDBOX_BASE_URL}/symbols").mock(
+        respx.get(f"{TEST_BASE_URL}/configuration/pairs").mock(
             return_value=httpx.Response(
                 200,
                 json={
-                    "symbols": [
-                        "BTC/EUR",
-                        "ETH/EUR",
-                        "SOL/EUR",
-                    ]
+                    "BTC/EUR": {"base": "BTC", "quote": "EUR"},
+                    "ETH/EUR": {"base": "ETH", "quote": "EUR"},
+                    "SOL/EUR": {"base": "SOL", "quote": "EUR"},
                 },
             )
         )
@@ -290,14 +285,12 @@ class TestMarketDataEndpoints:
     @respx.mock
     async def test_get_symbols_dict_format(self, exchange: RevolutXExchange) -> None:
         """Test getting symbols when response contains dicts."""
-        respx.get(f"{SANDBOX_BASE_URL}/symbols").mock(
+        respx.get(f"{TEST_BASE_URL}/configuration/pairs").mock(
             return_value=httpx.Response(
                 200,
                 json={
-                    "symbols": [
-                        {"symbol": "BTC/EUR", "status": "active"},
-                        {"name": "ETH/EUR", "status": "active"},  # alternate field
-                    ]
+                    "BTC/EUR": {"base": "BTC", "quote": "EUR", "status": "active"},
+                    "ETH/EUR": {"base": "ETH", "quote": "EUR", "status": "active"},
                 },
             )
         )
@@ -317,7 +310,7 @@ class TestAccountEndpoints:
     @respx.mock
     async def test_get_balances(self, exchange: RevolutXExchange) -> None:
         """Test getting account balances."""
-        respx.get(f"{SANDBOX_BASE_URL}/balances").mock(
+        respx.get(f"{TEST_BASE_URL}/balances").mock(
             return_value=httpx.Response(
                 200,
                 json={
@@ -347,7 +340,7 @@ class TestAccountEndpoints:
     @respx.mock
     async def test_get_balances_list_response(self, exchange: RevolutXExchange) -> None:
         """Test getting balances when response is a list."""
-        respx.get(f"{SANDBOX_BASE_URL}/balances").mock(
+        respx.get(f"{TEST_BASE_URL}/balances").mock(
             return_value=httpx.Response(
                 200,
                 json=[
@@ -366,7 +359,7 @@ class TestAccountEndpoints:
     @respx.mock
     async def test_get_balance_existing_currency(self, exchange: RevolutXExchange) -> None:
         """Test getting balance for existing currency."""
-        respx.get(f"{SANDBOX_BASE_URL}/balances").mock(
+        respx.get(f"{TEST_BASE_URL}/balances").mock(
             return_value=httpx.Response(
                 200,
                 json={
@@ -387,7 +380,7 @@ class TestAccountEndpoints:
     @respx.mock
     async def test_get_balance_nonexistent_currency(self, exchange: RevolutXExchange) -> None:
         """Test getting balance for nonexistent currency returns zero."""
-        respx.get(f"{SANDBOX_BASE_URL}/balances").mock(
+        respx.get(f"{TEST_BASE_URL}/balances").mock(
             return_value=httpx.Response(
                 200,
                 json={"balances": []},
@@ -409,7 +402,7 @@ class TestOrderEndpoints:
     @respx.mock
     async def test_create_market_order(self, exchange: RevolutXExchange) -> None:
         """Test creating a market order."""
-        respx.post(f"{SANDBOX_BASE_URL}/orders").mock(
+        respx.post(f"{TEST_BASE_URL}/orders").mock(
             return_value=httpx.Response(
                 200,
                 json={
@@ -446,7 +439,7 @@ class TestOrderEndpoints:
     @respx.mock
     async def test_create_limit_order(self, exchange: RevolutXExchange) -> None:
         """Test creating a limit order."""
-        respx.post(f"{SANDBOX_BASE_URL}/orders").mock(
+        respx.post(f"{TEST_BASE_URL}/orders").mock(
             return_value=httpx.Response(
                 200,
                 json={
@@ -482,7 +475,7 @@ class TestOrderEndpoints:
     @respx.mock
     async def test_create_stop_order(self, exchange: RevolutXExchange) -> None:
         """Test creating a stop loss order."""
-        respx.post(f"{SANDBOX_BASE_URL}/orders").mock(
+        respx.post(f"{TEST_BASE_URL}/orders").mock(
             return_value=httpx.Response(
                 200,
                 json={
@@ -517,7 +510,7 @@ class TestOrderEndpoints:
     @respx.mock
     async def test_cancel_order(self, exchange: RevolutXExchange) -> None:
         """Test cancelling an order."""
-        respx.delete(f"{SANDBOX_BASE_URL}/orders/order123").mock(
+        respx.delete(f"{TEST_BASE_URL}/orders/order123").mock(
             return_value=httpx.Response(
                 200,
                 json={
@@ -545,7 +538,7 @@ class TestOrderEndpoints:
     @respx.mock
     async def test_get_order(self, exchange: RevolutXExchange) -> None:
         """Test getting order by ID."""
-        respx.get(f"{SANDBOX_BASE_URL}/orders/order456").mock(
+        respx.get(f"{TEST_BASE_URL}/orders/order456").mock(
             return_value=httpx.Response(
                 200,
                 json={
@@ -588,7 +581,7 @@ class TestOrderEndpoints:
     @respx.mock
     async def test_get_open_orders(self, exchange: RevolutXExchange) -> None:
         """Test getting all open orders."""
-        respx.get(f"{SANDBOX_BASE_URL}/orders/active").mock(
+        respx.get(f"{TEST_BASE_URL}/orders/active").mock(
             return_value=httpx.Response(
                 200,
                 json={
@@ -635,7 +628,7 @@ class TestOrderEndpoints:
     @respx.mock
     async def test_get_open_orders_with_symbol_filter(self, exchange: RevolutXExchange) -> None:
         """Test getting open orders filtered by symbol."""
-        respx.get(f"{SANDBOX_BASE_URL}/orders/active").mock(
+        respx.get(f"{TEST_BASE_URL}/orders/active").mock(
             return_value=httpx.Response(
                 200,
                 json={
@@ -666,11 +659,11 @@ class TestOrderEndpoints:
     @respx.mock
     async def test_get_order_history(self, exchange: RevolutXExchange) -> None:
         """Test getting order history."""
-        respx.get(f"{SANDBOX_BASE_URL}/orders/history").mock(
+        respx.get(f"{TEST_BASE_URL}/orders/historical").mock(
             return_value=httpx.Response(
                 200,
                 json={
-                    "orders": [
+                    "data": [
                         {
                             "id": "order1",
                             "symbol": "BTC/EUR",
@@ -714,7 +707,7 @@ class TestErrorHandling:
     @respx.mock
     async def test_authentication_error_401(self, exchange: RevolutXExchange) -> None:
         """Test 401 raises AuthenticationError."""
-        respx.get(f"{SANDBOX_BASE_URL}/balances").mock(
+        respx.get(f"{TEST_BASE_URL}/balances").mock(
             return_value=httpx.Response(
                 401,
                 json={"message": "Invalid API key"},
@@ -729,7 +722,7 @@ class TestErrorHandling:
     @respx.mock
     async def test_authentication_error_403(self, exchange: RevolutXExchange) -> None:
         """Test 403 raises AuthenticationError."""
-        respx.get(f"{SANDBOX_BASE_URL}/balances").mock(
+        respx.get(f"{TEST_BASE_URL}/balances").mock(
             return_value=httpx.Response(
                 403,
                 json={"message": "Access denied"},
@@ -744,7 +737,7 @@ class TestErrorHandling:
     @respx.mock
     async def test_order_not_found_error(self, exchange: RevolutXExchange) -> None:
         """Test 404 raises OrderNotFoundError."""
-        respx.get(f"{SANDBOX_BASE_URL}/orders/nonexistent").mock(
+        respx.get(f"{TEST_BASE_URL}/orders/nonexistent").mock(
             return_value=httpx.Response(
                 404,
                 json={"message": "Order not found"},
@@ -759,7 +752,7 @@ class TestErrorHandling:
     @respx.mock
     async def test_rate_limit_error(self, exchange: RevolutXExchange) -> None:
         """Test 429 raises RateLimitError."""
-        respx.get(f"{SANDBOX_BASE_URL}/ticker").mock(
+        respx.get(f"{TEST_BASE_URL}/trades/all/BTC-EUR").mock(
             return_value=httpx.Response(
                 429,
                 json={"message": "Rate limit exceeded"},
@@ -775,7 +768,7 @@ class TestErrorHandling:
     @respx.mock
     async def test_insufficient_funds_error(self, exchange: RevolutXExchange) -> None:
         """Test insufficient funds error."""
-        respx.post(f"{SANDBOX_BASE_URL}/orders").mock(
+        respx.post(f"{TEST_BASE_URL}/orders").mock(
             return_value=httpx.Response(
                 400,
                 json={"message": "Insufficient balance"},
@@ -795,7 +788,7 @@ class TestErrorHandling:
     @respx.mock
     async def test_bad_request_error(self, exchange: RevolutXExchange) -> None:
         """Test 400 raises ExchangeError for non-insufficient-funds errors."""
-        respx.post(f"{SANDBOX_BASE_URL}/orders").mock(
+        respx.post(f"{TEST_BASE_URL}/orders").mock(
             return_value=httpx.Response(
                 400,
                 json={"message": "Invalid order parameters"},
@@ -815,7 +808,7 @@ class TestErrorHandling:
     @respx.mock
     async def test_server_error(self, exchange: RevolutXExchange) -> None:
         """Test 500 raises ExchangeError."""
-        respx.get(f"{SANDBOX_BASE_URL}/ticker").mock(
+        respx.get(f"{TEST_BASE_URL}/trades/all/BTC-EUR").mock(
             return_value=httpx.Response(
                 500,
                 json={"error": "Internal server error"},
