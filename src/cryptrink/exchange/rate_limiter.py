@@ -10,13 +10,10 @@ import time
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import TypeVar
 
 from cryptrink.core.logging import get_logger
 
 logger = get_logger(__name__)
-
-T = TypeVar("T")
 
 
 @dataclass
@@ -181,7 +178,7 @@ class EndpointRateLimiter:
         return self._limiters[endpoint]
 
 
-async def with_retry(
+async def with_retry[T](
     coro_func: Callable[[], Awaitable[T]],
     rate_limiter: RateLimiter,
     *,
