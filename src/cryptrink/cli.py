@@ -148,7 +148,7 @@ def status() -> None:
     """Show current trading status and positions."""
     console.print(
         Panel(
-            "[bold]Trading Status[/bold]\n\n" "No active trading session.",
+            "[bold]Trading Status[/bold]\n\nNo active trading session.",
             title="Status",
             border_style="green",
         )
