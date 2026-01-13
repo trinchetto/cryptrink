@@ -52,8 +52,6 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v6
 
@@ -98,15 +96,6 @@ jobs:
         with:
           name: coverage-badge
           path: .github/badges/coverage.svg
-
-      - name: Commit coverage badge
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add .github/badges/coverage.svg
-          git diff --staged --quiet || git commit -m "ci: update coverage badge"
-          git push
 
   integration-test:
     name: Integration Tests
