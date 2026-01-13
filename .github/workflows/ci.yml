@@ -97,6 +97,50 @@ jobs:
           name: coverage-badge
           path: .github/badges/coverage.svg
 
+
+  coverage-pages:
+    name: Publish Coverage Badge (Pages)
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - name: Download coverage badge artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-badge
+          path: badge
+
+      - name: Prepare Pages content
+        run: |
+          mkdir -p site
+          cp badge/coverage.svg site/coverage.svg
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy-pages:
+    name: Deploy Pages
+    runs-on: ubuntu-latest
+    needs: coverage-pages
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
   integration-test:
     name: Integration Tests
     runs-on: ubuntu-latest
