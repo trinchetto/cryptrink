@@ -31,7 +31,7 @@ def generate_badge(percentage: float) -> str:
     value_width = 45
     total_width = label_width + value_width
 
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{total_width}" height="20">
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{total_width}" height="20">
   <linearGradient id="b" x2="0" y2="100%">
     <stop offset="0" stop-color="#bbb" stop-opacity=".1"/>
     <stop offset="1" stop-opacity=".1"/>
@@ -50,7 +50,7 @@ def generate_badge(percentage: float) -> str:
     <text x="{label_width + value_width / 2}" y="15" fill="#010101" fill-opacity=".3">{percentage_text}</text>
     <text x="{label_width + value_width / 2}" y="14">{percentage_text}</text>
   </g>
-</svg>'''
+</svg>"""
 
 
 def main() -> None:

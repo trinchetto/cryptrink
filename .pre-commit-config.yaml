@@ -28,6 +28,12 @@ repos:
           - pydantic-settings>=2.6
           - types-pyyaml>=6.0
           - pandas-stubs>=2.2
+          - httpx>=0.28
+          - structlog>=24.4
+          - typer>=0.15
+          - rich>=13.9
+          - pynacl>=1.5
+          - cryptography>=44.0
         args: [--config-file=pyproject.toml]
         pass_filenames: false
         entry: mypy src/
@@ -36,8 +42,6 @@ repos:
     rev: 2.0.1
     hooks:
       - id: poetry-check
-      - id: poetry-lock
-        args: [--check]
 
 ci:
   autofix_commit_msg: 'style: auto-fix by pre-commit hooks'

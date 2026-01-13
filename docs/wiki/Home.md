@@ -4,12 +4,13 @@ Welcome to the Cryptrink documentation wiki! This wiki contains design decisions
 
 ## Quick Links
 
-- [Project Plan](Project-Plan) - Implementation roadmap and milestones
-- [Architecture](Architecture) - System design and component overview
-- [Strategies](Strategies) - Trading strategy documentation
-- [Revolut X Integration](Revolut-X-Integration) - Exchange API details
-- [Deployment](Deployment) - Deployment options and configuration
-- [Development Guide](Development-Guide) - Contributing and development setup
+- [Getting Started](../GETTING_STARTED.md) - Complete setup instructions
+- [Revolut X Integration](../REVOLUTX_INTEGRATION.md) - API documentation and examples
+- [Project Plan](Project-Plan.md) - Implementation roadmap and milestones
+- [Architecture](Architecture.md) - System design and component overview
+- [Deployment](Deployment.md) - Deployment options and configuration
+- [Development Guide](Development-Guide.md) - Contributing and development setup
+- [Strategies](Strategies.md) - Trading strategy documentation
 
 ## Project Overview
 
@@ -25,7 +26,7 @@ Cryptrink is a crypto trading agent designed for [Revolut X](https://www.revolut
 
 **Version**: 0.1.0 (MVP in development)
 
-### Completed
+### Phase 1: Foundation ✅ COMPLETE
 - Project structure and packaging (Poetry)
 - Configuration management (pydantic-settings)
 - Abstract interfaces (Exchange, Strategy, DataFeed)
@@ -33,14 +34,26 @@ Cryptrink is a crypto trading agent designed for [Revolut X](https://www.revolut
 - CLI framework (typer)
 - Logging infrastructure (structlog)
 
-### In Progress
-- Revolut X API integration
-- Data feed implementation
-- Basic trading strategies
+### Phase 2: Revolut X Integration ✅ COMPLETE
+- Ed25519 authentication
+- REST API client with httpx
+- Rate limiting and retry logic
+- All market data endpoints (ticker, orderbook, trades, symbols)
+- Account endpoints (balances)
+- Order endpoints (read-only: open orders, order history)
+- 42 unit tests + 9 integration tests
 
-### Planned
-- Backtesting engine
+### Phase 3: Data & Indicators 🚧 NEXT
+- Historical data fetcher
+- OHLCV aggregation
+- Technical indicators (SMA, EMA, RSI, Bollinger Bands, etc.)
+- Data feed abstraction
+
+### Future Phases
+- Strategy framework and basic strategies
+- Trading engine with order management
 - Risk management module
+- Backtesting engine
 - Discord notifications
 - Performance metrics and reporting
 

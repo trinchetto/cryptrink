@@ -87,5 +87,5 @@ def mock_exchange() -> AsyncMock:
     """Create a mock exchange for testing."""
     exchange = AsyncMock()
     exchange.name = "mock_exchange"
-    exchange.is_sandbox = True
+    exchange.is_production = False
     return exchange

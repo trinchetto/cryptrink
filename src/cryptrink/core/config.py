@@ -1,12 +1,18 @@
 """Configuration management for Cryptrink."""
 
+import os
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 import yaml
+from dotenv import load_dotenv
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Load environment variables from .env.local if it exists (but not during tests)
+if os.getenv("PYTEST_CURRENT_TEST") is None:
+    load_dotenv(".env.local")
 
 
 class ExecutionMode(str, Enum):
@@ -25,19 +31,72 @@ class RevolutXSettings(BaseSettings):
 
     api_key: SecretStr = Field(default=SecretStr(""), description="Revolut X API key")
     private_key: SecretStr = Field(
-        default=SecretStr(""), description="Ed25519 private key for signing"
+        default=SecretStr(""), description="Ed25519 private key for signing (base64)"
+    )
+    private_key_path: str | None = Field(
+        default=None, description="Path to PEM file containing Ed25519 private key"
     )
     base_url: str = Field(
-        default="https://x.revolut.com/api",
-        description="Revolut X API base URL",
+        default="https://revx.revolut.com/api/1.0",
+        description="Revolut X API base URL (includes /api/1.0 prefix)",
     )
-    sandbox: bool = Field(default=True, description="Use sandbox environment")
 
     @field_validator("base_url")
     @classmethod
     def validate_base_url(cls, v: str) -> str:
         """Ensure base URL doesn't have trailing slash."""
         return v.rstrip("/")
+
+    def get_private_key(self) -> str:
+        """Get the private key, loading from file if needed.
+
+        Returns:
+            Base64-encoded private key string (raw 32-byte seed).
+
+        Raises:
+            ValueError: If neither private_key nor private_key_path is set.
+        """
+        import base64
+
+        # If private_key is already set, use it
+        if self.private_key.get_secret_value():
+            return self.private_key.get_secret_value()
+
+        # Otherwise, try to load from file
+        if self.private_key_path:
+            key_path = Path(self.private_key_path)
+            if not key_path.exists():
+                msg = f"Private key file not found: {self.private_key_path}"
+                raise ValueError(msg)
+
+            # Load PEM file and extract raw Ed25519 seed (32 bytes)
+            try:
+                from cryptography.hazmat.backends import default_backend
+                from cryptography.hazmat.primitives import serialization
+
+                pem_data = key_path.read_bytes()
+                private_key_obj = serialization.load_pem_private_key(
+                    pem_data,
+                    password=None,
+                    backend=default_backend(),
+                )
+
+                # Extract raw 32-byte seed
+                raw_private = private_key_obj.private_bytes(
+                    encoding=serialization.Encoding.Raw,
+                    format=serialization.PrivateFormat.Raw,
+                    encryption_algorithm=serialization.NoEncryption(),
+                )
+
+                # Return as base64-encoded string
+                return base64.b64encode(raw_private).decode("ascii")
+
+            except Exception as e:
+                msg = f"Failed to load private key from {self.private_key_path}: {e}"
+                raise ValueError(msg) from e
+
+        msg = "Either REVOLUTX_PRIVATE_KEY or REVOLUTX_PRIVATE_KEY_PATH must be set"
+        raise ValueError(msg)
 
 
 class RiskSettings(BaseSettings):

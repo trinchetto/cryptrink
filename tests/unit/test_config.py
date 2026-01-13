@@ -26,16 +26,21 @@ class TestExecutionMode:
 class TestRevolutXSettings:
     """Tests for RevolutX configuration."""
 
-    def test_default_values(self) -> None:
+    def test_default_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test default configuration values."""
+        # Clear any environment variables that might be set
+        monkeypatch.delenv("REVOLUTX_BASE_URL", raising=False)
+        monkeypatch.delenv("REVOLUTX_API_KEY", raising=False)
+        monkeypatch.delenv("REVOLUTX_PRIVATE_KEY", raising=False)
+        monkeypatch.delenv("REVOLUTX_PRIVATE_KEY_PATH", raising=False)
+
         settings = RevolutXSettings()
-        assert settings.base_url == "https://x.revolut.com/api"
-        assert settings.sandbox is True
+        assert settings.base_url == "https://revx.revolut.com/api/1.0"
 
     def test_base_url_strips_trailing_slash(self) -> None:
         """Test that trailing slash is removed from base URL."""
-        settings = RevolutXSettings(base_url="https://x.revolut.com/api/")
-        assert settings.base_url == "https://x.revolut.com/api"
+        settings = RevolutXSettings(base_url="https://revx.revolut.com/api/1.0/")
+        assert settings.base_url == "https://revx.revolut.com/api/1.0"
 
 
 class TestRiskSettings:

@@ -25,11 +25,8 @@ revolutx:
   # Ed25519 private key for request signing (base64 encoded)
   # private_key: "your-private-key-here"
 
-  # API base URL
-  base_url: https://x.revolut.com/api
-
-  # Use sandbox environment for testing
-  sandbox: true
+  # API base URL (production only)
+  base_url: https://revx.revolut.com/api/1.0
 
 # Risk Management Settings
 risk:
