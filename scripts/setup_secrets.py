@@ -229,7 +229,7 @@ def main() -> None:
     # Step 1: Create secrets directory
     print("Step 1: Creating secrets directory...")
     secrets_dir = create_secrets_dir()
-    print(f"  ✓ Created: {secrets_dir.absolute()}")
+    print("  ✓ Created: secrets/ directory")
     print()
 
     # Step 2: Move PEM files
