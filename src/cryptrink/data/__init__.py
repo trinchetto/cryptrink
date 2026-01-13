@@ -1,5 +1,11 @@
 """Data module for OHLCV storage and retrieval."""
 
+from cryptrink.data.feed import (
+    BaseDataFeed,
+    HistoricalDataFeed,
+    HybridDataFeed,
+    LiveDataFeed,
+)
 from cryptrink.data.historical import (
     TIMEFRAME_SECONDS,
     HistoricalDataFetcher,
@@ -12,8 +18,12 @@ __all__ = [
     "OHLCV",
     "TIMEFRAME_SECONDS",
     "Base",
+    "BaseDataFeed",
+    "HistoricalDataFeed",
     "HistoricalDataFetcher",
+    "HybridDataFeed",
     "Indicators",
+    "LiveDataFeed",
     "OHLCVAggregator",
     "OHLCVRepository",
     "init_db",
