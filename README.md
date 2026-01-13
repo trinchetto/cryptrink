@@ -7,28 +7,42 @@ A crypto trading agent for [Revolut X](https://www.revolut.com/business/revolut-
 
 ## Project Status
 
-**Phase 2 - Revolut X Integration: COMPLETE**
+**Phase 3 - Data & Indicators: COMPLETE ✅**
 
-- Revolut X API client with Ed25519 authentication
-- All market data endpoints (ticker, orderbook, trades, symbols)
-- All account endpoints (balances)
-- Order management (read-only: get orders, order history)
-- 42 unit tests passing
-- 9 integration tests passing
-- Production-ready for read-only operations
+- SQLite storage with async SQLAlchemy 2.0
+- OHLCV data aggregation (7 timeframes: 1m, 5m, 15m, 30m, 1h, 4h, 1d)
+- Technical indicators: SMA, EMA, RSI, Bollinger Bands, MACD, ATR
+- Data feed abstraction: LiveDataFeed, HistoricalDataFeed, HybridDataFeed
+- 67 new tests (170 total tests passing)
+- Decimal precision for financial data
+- Pandas integration for efficient calculations
 
-**Next Phase**: Phase 3 - Data & Indicators
+**Previous Phases:**
+- ✅ Phase 1 - Foundation (Core Infrastructure)
+- ✅ Phase 2 - Revolut X Integration (42 unit tests, 9 integration tests)
+- ✅ Phase 3 - Data & Indicators (67 tests)
+
+**Next Phase**: Phase 4 - Strategy Framework
 
 See the [Project Plan](docs/wiki/Project-Plan.md) for detailed roadmap.
 
 ## Features
 
+### Implemented ✅
 - **Revolut X Integration**: Direct API integration with Ed25519 authentication
-- **Multiple Trading Strategies**: Trend following, mean reversion, and market-making strategies (planned)
-- **Backtesting Engine**: Test strategies against historical data before live trading (planned)
-- **Multiple Execution Modes**: live, paper, backtest, suggest (planned)
-- **Risk Management**: Position sizing, stop-loss, take-profit, and circuit breakers (planned)
-- **Notifications**: Discord alerts for trade execution and signals (planned)
+- **Market Data**: Real-time ticker, orderbook, trades, and symbol information
+- **Account Management**: Balance queries and order status tracking
+- **Data Storage**: SQLite database with async operations and Decimal precision
+- **OHLCV Aggregation**: Convert raw trades to candlesticks (7 timeframes)
+- **Technical Indicators**: SMA, EMA, RSI, Bollinger Bands, MACD, ATR
+- **Data Feeds**: Live, historical, and hybrid data access patterns
+
+### Planned 🚧
+- **Trading Strategies**: Trend following, mean reversion, and market-making
+- **Backtesting Engine**: Test strategies against historical data
+- **Multiple Execution Modes**: live, paper, backtest, suggest
+- **Risk Management**: Position sizing, stop-loss, take-profit, circuit breakers
+- **Notifications**: Discord alerts for trade execution and signals
 
 ## Prerequisites
 

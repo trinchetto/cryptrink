@@ -43,14 +43,23 @@ Cryptrink is a crypto trading agent designed for [Revolut X](https://www.revolut
 - Order endpoints (read-only: open orders, order history)
 - 42 unit tests + 9 integration tests
 
-### Phase 3: Data & Indicators 🚧 NEXT
-- Historical data fetcher
-- OHLCV aggregation
-- Technical indicators (SMA, EMA, RSI, Bollinger Bands, etc.)
-- Data feed abstraction
+### Phase 3: Data & Indicators ✅ COMPLETE
+- SQLite storage with async SQLAlchemy 2.0
+- OHLCV aggregation from raw trades (7 timeframes)
+- Technical indicators: SMA, EMA, RSI, Bollinger Bands, MACD, ATR
+- Data feed abstraction: LiveDataFeed, HistoricalDataFeed, HybridDataFeed
+- Decimal precision for financial data
+- Pandas integration for efficient calculations
+- 67 tests (170 total tests passing)
+
+### Phase 4: Strategy Framework 🚧 NEXT
+- Strategy base class enhancements
+- SMA Crossover strategy (trend following)
+- RSI Mean Reversion strategy
+- Signal confidence scoring
+- Strategy parameter optimization hooks
 
 ### Future Phases
-- Strategy framework and basic strategies
 - Trading engine with order management
 - Risk management module
 - Backtesting engine
@@ -65,8 +74,8 @@ Cryptrink is a crypto trading agent designed for [Revolut X](https://www.revolut
 | Package Manager | Poetry |
 | HTTP Client | httpx |
 | Data Processing | pandas, numpy |
-| Technical Analysis | pandas-ta |
-| Database | SQLite (dev) / PostgreSQL (prod) |
+| Technical Analysis | Custom pandas-based indicators |
+| Database | SQLAlchemy 2.0 + SQLite (dev) / PostgreSQL (prod) |
 | CLI | typer, rich |
 | Logging | structlog |
 | Testing | pytest, respx |
