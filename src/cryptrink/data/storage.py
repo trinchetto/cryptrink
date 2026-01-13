@@ -22,13 +22,7 @@ from cryptrink.core.logging import get_logger
 logger = get_logger(__name__)
 
 
-class Base(DeclarativeBase):
-    """Base class for all database models."""
-
-    pass
-
-
-class OHLCV(Base):
+class OHLCV(DeclarativeBase):
     """OHLCV candlestick data model.
 
     Stores Open, High, Low, Close, Volume data for a symbol at a specific timeframe.
@@ -104,7 +98,7 @@ async def init_db(engine: AsyncEngine) -> None:
     """
     logger.info("Initializing database schema")
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(DeclarativeBase.metadata.create_all)
     logger.info("Database schema initialized")
 
 
