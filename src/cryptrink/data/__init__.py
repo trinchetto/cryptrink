@@ -5,6 +5,7 @@ from cryptrink.data.historical import (
     HistoricalDataFetcher,
     OHLCVAggregator,
 )
+from cryptrink.data.indicators import Indicators, ohlcv_to_dataframe
 from cryptrink.data.storage import OHLCV, Base, OHLCVRepository, init_db
 
 __all__ = [
@@ -12,7 +13,9 @@ __all__ = [
     "TIMEFRAME_SECONDS",
     "Base",
     "HistoricalDataFetcher",
+    "Indicators",
     "OHLCVAggregator",
     "OHLCVRepository",
     "init_db",
+    "ohlcv_to_dataframe",
 ]
