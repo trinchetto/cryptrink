@@ -43,7 +43,6 @@ async with exchange:
 
 ### Base URL
 - **Production**: `https://revx.revolut.com/api/1.0`
-- **Sandbox**: Not available (Revolut X does not provide a sandbox environment)
 
 ### Authentication
 - **Method**: Ed25519 signature-based authentication
@@ -319,7 +318,7 @@ class RevolutXSettings(BaseSettings):
 ### Unit Tests: ✅ 42/42 Passing
 
 All unit tests pass including:
-- Exchange properties (name, sandbox status)
+- Exchange properties (name, production status)
 - Connection management
 - Market data endpoints
 - Account endpoints
@@ -436,7 +435,7 @@ The integration is **production-ready** for:
 ## Known Limitations
 
 ### Not Available
-1. **Sandbox Environment**: Revolut X does not provide a separate sandbox/testnet environment. All operations use real funds.
+1. **Test Environment**: Revolut X only provides a production environment. All operations use real funds.
 2. **Candles/OHLCV Data**: The `/candles/{symbol}` endpoint exists but requires authentication and may have specific requirements.
 3. **Order Creation**: Endpoints available but not yet implemented (safety measure).
 

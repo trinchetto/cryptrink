@@ -339,7 +339,7 @@ Before deploying to production:
 
 - [ ] API keys stored securely (environment variables, secrets manager)
 - [ ] Private key never committed to git
-- [ ] Sandbox mode tested first
+- [ ] Paper trading mode tested first
 - [ ] Risk limits configured appropriately
 - [ ] Logging enabled for audit trail
 - [ ] Monitoring and alerts configured

@@ -266,9 +266,6 @@ symbols:
   - BTC-EUR
   - ETH-EUR
 
-revolutx:
-  sandbox: true
-
 risk:
   max_position_size_pct: 0.1
   max_daily_loss_pct: 0.05

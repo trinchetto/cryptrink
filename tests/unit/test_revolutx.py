@@ -56,9 +56,9 @@ class TestRevolutXExchangeProperties:
         """Test exchange name property."""
         assert exchange.name == "revolut_x"
 
-    def test_is_sandbox(self, exchange: RevolutXExchange) -> None:
-        """Test sandbox property (always False for Revolut X)."""
-        assert exchange.is_sandbox is False
+    def test_is_production(self, exchange: RevolutXExchange) -> None:
+        """Test production property (always True for Revolut X)."""
+        assert exchange.is_production is True
 
 
 class TestRevolutXExchangeConnection:

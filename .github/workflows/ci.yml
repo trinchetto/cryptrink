@@ -143,7 +143,6 @@ jobs:
         env:
           REVOLUTX_API_KEY: ${{ secrets.REVOLUTX_API_KEY }}
           REVOLUTX_PRIVATE_KEY: ${{ secrets.REVOLUTX_PRIVATE_KEY }}
-          REVOLUTX_SANDBOX: ${{ secrets.REVOLUTX_SANDBOX }}
           REVOLUTX_BASE_URL: ${{ secrets.REVOLUTX_BASE_URL }}
         run: |
           poetry run pytest tests/integration/ -v -m integration

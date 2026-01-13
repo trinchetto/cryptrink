@@ -283,7 +283,7 @@ The CI workflow will automatically use these secrets.
 
 ### Revolut X API
 
-- **No Sandbox Environment**: Revolut X does not provide a separate sandbox/testnet environment
+- **Production Environment Only**: Revolut X does not provide a separate test environment
 - **Real Money**: All API operations use real funds and execute real trades
 - **Paper Trading Mode**: Use `CRYPTRINK_EXECUTION_MODE=paper` for testing strategies without executing real trades
 - **Rate Limits**: Be aware of API rate limits when running tests
@@ -298,7 +298,6 @@ cryptrink/
 │   ├── private.pem         # Your Ed25519 private key
 │   └── public.pem          # Your Ed25519 public key
 ├── .env.local              # Gitignored - Your local config
-├── .env.example            # Removed (redundant)
 ├── scripts/
 │   └── setup_secrets.py    # Setup automation
 └── tests/

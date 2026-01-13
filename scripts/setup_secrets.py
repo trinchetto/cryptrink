@@ -80,7 +80,6 @@ REVOLUTX_API_KEY=your_api_key_here
 REVOLUTX_PRIVATE_KEY_PATH=./secrets/private.pem
 
 # Revolut X API Base URL (includes /api/1.0 prefix)
-# Note: Revolut X does not have a separate sandbox environment
 REVOLUTX_BASE_URL=https://revx.revolut.com/api/1.0
 
 # =============================================================================

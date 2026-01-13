@@ -205,8 +205,8 @@ class BaseExchange(ABC):
 
     @property
     @abstractmethod
-    def is_sandbox(self) -> bool:
-        """Whether connected to sandbox/testnet environment."""
+    def is_production(self) -> bool:
+        """Whether connected to production environment."""
         ...
 
     # Market Data Methods

@@ -42,7 +42,6 @@ async def main():
     exchange = RevolutXExchange(
         api_key=settings.revolutx.api_key.get_secret_value(),
         private_key_base64=private_key,
-        sandbox=settings.revolutx.sandbox,
     )
 
     # Common API path patterns to test

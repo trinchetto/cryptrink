@@ -39,7 +39,6 @@ from cryptrink.exchange.rate_limiter import (
 logger = get_logger(__name__)
 
 # Revolut X API base URL
-# Note: Revolut X does not have a separate sandbox environment
 # The base URL already includes the /api/1.0/ prefix
 DEFAULT_BASE_URL = "https://revx.revolut.com/api/1.0"
 
@@ -48,7 +47,6 @@ class RevolutXExchange(BaseExchange):
     """Revolut X cryptocurrency exchange client.
 
     Implements the BaseExchange interface for trading on Revolut X.
-    Note: Revolut X does not have a separate sandbox environment.
 
     Example:
         async with RevolutXExchange(
@@ -106,12 +104,12 @@ class RevolutXExchange(BaseExchange):
         return "revolut_x"
 
     @property
-    def is_sandbox(self) -> bool:
-        """Whether using sandbox environment.
+    def is_production(self) -> bool:
+        """Whether connected to production environment.
 
-        Note: Revolut X does not have a sandbox environment, so this always returns False.
+        Note: Revolut X only provides a production environment.
         """
-        return False
+        return True
 
     async def connect(self) -> None:
         """Establish connection to the exchange."""
