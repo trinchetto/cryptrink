@@ -47,32 +47,32 @@ src/cryptrink/
 
 ---
 
-## Phase 2: Revolut X Integration
+## Phase 2: Revolut X Integration - COMPLETED ✅
 
 ### Objectives
 Implement the Revolut X API client with authentication and rate limiting.
 
 ### Deliverables
-- [ ] Ed25519 authentication module
-- [ ] REST API client with httpx
-- [ ] Rate limiting and retry logic
-- [ ] Market data endpoints:
-  - [ ] Get ticker
-  - [ ] Get order book
-  - [ ] Get recent trades
-  - [ ] Get available symbols
-- [ ] Trading endpoints:
-  - [ ] Place order (market/limit)
-  - [ ] Cancel order
-  - [ ] Get order status
-  - [ ] Get open orders
-  - [ ] Get order history
-- [ ] Account endpoints:
-  - [ ] Get balances
-- [ ] WebSocket support (if available)
-- [ ] Comprehensive tests with mocked responses
+- [x] Ed25519 authentication module
+- [x] REST API client with httpx
+- [x] Rate limiting and retry logic
+- [x] Market data endpoints:
+  - [x] Get ticker
+  - [x] Get order book
+  - [x] Get recent trades
+  - [x] Get available symbols
+- [x] Trading endpoints (read-only):
+  - [ ] Place order (market/limit) - Pending Phase 5
+  - [ ] Cancel order - Pending Phase 5
+  - [ ] Get order status - Implemented
+  - [x] Get open orders
+  - [x] Get order history
+- [x] Account endpoints:
+  - [x] Get balances
+- [ ] WebSocket support (if available) - Future enhancement
+- [x] Comprehensive tests: 42 unit tests + 9 integration tests
 
-### Files to Create
+### Files Created ✅
 ```
 src/cryptrink/exchange/
 ├── revolutx.py        # Main Revolut X client
@@ -80,10 +80,16 @@ src/cryptrink/exchange/
 └── rate_limiter.py    # Rate limiting logic
 ```
 
+### Documentation
+- [Revolut X Integration Guide](../REVOLUTX_INTEGRATION.md)
+- [Getting Started](../GETTING_STARTED.md)
+
 ### Technical Notes
 - Revolut X uses Ed25519 for request signing
 - API key obtained from Revolut X web app
-- Headers: `X-Revx-Timestamp`, `X-Revx-Signature`
+- Headers: `X-Revx-API-Key`, `X-Revx-Timestamp`, `X-Revx-Signature`
+- No test environment available - production only
+- Rate limiting: 100 requests per minute (default)
 - Fees: 0% maker, 0.09% taker
 
 ---
