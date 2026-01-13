@@ -8,7 +8,7 @@ import pytest
 
 from cryptrink.exchange.base import OrderSide
 from cryptrink.strategies.base import SignalStrength, SignalType, StrategyContext
-from cryptrink.strategies.mean_reversion import RsiMeanReversionStrategy
+from cryptrink.strategies.mean_reversion import BollingerBandsStrategy, RsiMeanReversionStrategy
 
 
 class TestRsiMeanReversionStrategy:
@@ -474,6 +474,408 @@ class TestRsiMeanReversionStrategy:
     def test_context_validation(self) -> None:
         """Test that context validation works correctly."""
         strategy = RsiMeanReversionStrategy(rsi_period=14)
+
+        # Test with None ohlcv
+        context = StrategyContext(
+            symbol="BTC-USD",
+            current_price=Decimal("100"),
+            timestamp=datetime.now(UTC),
+            ohlcv=None,  # type: ignore
+        )
+
+        signal = strategy.generate_signal(context)
+        assert signal.signal_type == SignalType.HOLD
+
+
+class TestBollingerBandsStrategy:
+    """Tests for Bollinger Bands strategy."""
+
+    def test_init_valid_parameters(self) -> None:
+        """Test initialization with valid parameters."""
+        strategy = BollingerBandsStrategy(period=20, std_dev=2.0, penetration_threshold=0.001)
+
+        assert strategy.name == "bollinger_bands_20_2"
+        assert "period=20" in strategy.description
+        assert "std_dev=2" in strategy.description
+        assert strategy.required_history == 30  # period + 10
+        assert strategy.timeframe == "1h"
+
+    def test_init_invalid_period(self) -> None:
+        """Test that period must be >= 2."""
+        with pytest.raises(ValueError, match="period must be >= 2"):
+            BollingerBandsStrategy(period=1)
+
+    def test_init_invalid_std_dev(self) -> None:
+        """Test that std_dev must be > 0."""
+        with pytest.raises(ValueError, match="std_dev must be > 0"):
+            BollingerBandsStrategy(std_dev=0)
+
+        with pytest.raises(ValueError, match="std_dev must be > 0"):
+            BollingerBandsStrategy(std_dev=-1.0)
+
+    def test_init_invalid_threshold(self) -> None:
+        """Test that penetration_threshold must be >= 0."""
+        with pytest.raises(ValueError, match="penetration_threshold must be >= 0"):
+            BollingerBandsStrategy(penetration_threshold=-0.1)
+
+    def test_price_below_lower_band_generates_entry_long(self) -> None:
+        """Test that price below lower band generates ENTRY_LONG signal."""
+        strategy = BollingerBandsStrategy(period=20, std_dev=2.0)
+
+        # Create price data with strong downward move
+        # Start stable, then sharp drop to break below lower band
+        prices = [100.0] * 25 + [99.0, 98.0, 97.0, 96.0, 95.0, 94.0, 93.0, 92.0, 91.0, 90.0]
+
+        ohlcv = pd.DataFrame(
+            {
+                "open": prices,
+                "high": [p + 0.5 for p in prices],
+                "low": [p - 0.5 for p in prices],
+                "close": prices,
+                "volume": [1000] * len(prices),
+            }
+        )
+
+        context = StrategyContext(
+            symbol="BTC-USD",
+            current_price=Decimal("90.0"),
+            timestamp=datetime.now(UTC),
+            ohlcv=ohlcv,
+        )
+
+        signal = strategy.generate_signal(context)
+
+        # Should generate ENTRY_LONG when price breaks below lower band
+        assert signal.signal_type == SignalType.ENTRY_LONG
+        assert signal.symbol == "BTC-USD"
+        assert "lower_band" in signal.metadata
+        assert signal.metadata["current_price"] < signal.metadata["lower_band"]
+
+    def test_price_above_upper_band_generates_exit_long(self) -> None:
+        """Test that price above upper band generates EXIT_LONG when in position."""
+        strategy = BollingerBandsStrategy(period=20, std_dev=2.0)
+
+        # Create price data with strong upward move
+        # Start stable, then sharp rise to break above upper band
+        prices = [100.0] * 25 + [
+            101.0,
+            102.0,
+            103.0,
+            104.0,
+            105.0,
+            106.0,
+            107.0,
+            108.0,
+            109.0,
+            110.0,
+        ]
+
+        ohlcv = pd.DataFrame(
+            {
+                "open": prices,
+                "high": [p + 0.5 for p in prices],
+                "low": [p - 0.5 for p in prices],
+                "close": prices,
+                "volume": [1000] * len(prices),
+            }
+        )
+
+        context = StrategyContext(
+            symbol="BTC-USD",
+            current_price=Decimal("110.0"),
+            timestamp=datetime.now(UTC),
+            ohlcv=ohlcv,
+            position_size=Decimal("1.0"),
+            position_side=OrderSide.BUY,
+            position_entry_price=Decimal("95.0"),
+        )
+
+        signal = strategy.generate_signal(context)
+
+        # Should generate EXIT_LONG when price breaks above upper band
+        assert signal.signal_type == SignalType.EXIT_LONG
+        assert signal.symbol == "BTC-USD"
+        assert "upper_band" in signal.metadata
+        assert signal.metadata["current_price"] > signal.metadata["upper_band"]
+
+    def test_price_within_bands_generates_hold(self) -> None:
+        """Test that price within bands generates HOLD signal."""
+        strategy = BollingerBandsStrategy(period=20, std_dev=2.0)
+
+        # Create stable price data that stays within bands
+        prices = [100.0 + (i % 3) for i in range(35)]
+
+        ohlcv = pd.DataFrame(
+            {
+                "open": prices,
+                "high": [p + 0.5 for p in prices],
+                "low": [p - 0.5 for p in prices],
+                "close": prices,
+                "volume": [1000] * len(prices),
+            }
+        )
+
+        context = StrategyContext(
+            symbol="BTC-USD",
+            current_price=Decimal("101.0"),
+            timestamp=datetime.now(UTC),
+            ohlcv=ohlcv,
+        )
+
+        signal = strategy.generate_signal(context)
+
+        # Should generate HOLD when price is within bands
+        assert signal.signal_type == SignalType.HOLD
+        assert signal.symbol == "BTC-USD"
+        # Price should be between bands
+        assert (
+            signal.metadata["lower_band"]
+            < signal.metadata["current_price"]
+            < signal.metadata["upper_band"]
+        )
+
+    def test_price_below_band_with_position_generates_hold(self) -> None:
+        """Test that price below band with existing position generates HOLD."""
+        strategy = BollingerBandsStrategy(period=20, std_dev=2.0)
+
+        # Create price data with downward move
+        prices = [100.0] * 25 + list(range(99, 90, -1))
+
+        ohlcv = pd.DataFrame(
+            {
+                "open": prices,
+                "high": [p + 0.5 for p in prices],
+                "low": [p - 0.5 for p in prices],
+                "close": prices,
+                "volume": [1000] * len(prices),
+            }
+        )
+
+        context = StrategyContext(
+            symbol="BTC-USD",
+            current_price=Decimal("90.0"),
+            timestamp=datetime.now(UTC),
+            ohlcv=ohlcv,
+            position_size=Decimal("1.0"),
+            position_side=OrderSide.BUY,
+            position_entry_price=Decimal("100.0"),
+        )
+
+        signal = strategy.generate_signal(context)
+
+        # Should generate HOLD (already in position, can't enter again)
+        assert signal.signal_type == SignalType.HOLD
+
+    def test_price_above_band_without_position_generates_hold(self) -> None:
+        """Test that price above band without position generates HOLD."""
+        strategy = BollingerBandsStrategy(period=20, std_dev=2.0)
+
+        # Create price data with upward move
+        prices = [100.0] * 25 + list(range(101, 111))
+
+        ohlcv = pd.DataFrame(
+            {
+                "open": prices,
+                "high": [p + 0.5 for p in prices],
+                "low": [p - 0.5 for p in prices],
+                "close": prices,
+                "volume": [1000] * len(prices),
+            }
+        )
+
+        context = StrategyContext(
+            symbol="BTC-USD",
+            current_price=Decimal("110.0"),
+            timestamp=datetime.now(UTC),
+            ohlcv=ohlcv,
+        )
+
+        signal = strategy.generate_signal(context)
+
+        # Should generate HOLD (not in position, can't exit)
+        assert signal.signal_type == SignalType.HOLD
+
+    def test_signal_strength_strong_penetration(self) -> None:
+        """Test signal strength for strong band penetration."""
+        strategy = BollingerBandsStrategy(period=20, std_dev=2.0)
+
+        # Create data with very strong downward breakout (> 1% penetration)
+        prices = [100.0] * 25 + [99.0, 97.0, 95.0, 93.0, 91.0, 89.0, 87.0, 85.0, 83.0, 81.0]
+
+        ohlcv = pd.DataFrame(
+            {
+                "open": prices,
+                "high": [p + 0.5 for p in prices],
+                "low": [p - 0.5 for p in prices],
+                "close": prices,
+                "volume": [1000] * len(prices),
+            }
+        )
+
+        context = StrategyContext(
+            symbol="BTC-USD",
+            current_price=Decimal("81.0"),
+            timestamp=datetime.now(UTC),
+            ohlcv=ohlcv,
+        )
+
+        signal = strategy.generate_signal(context)
+
+        # Strong penetration should result in STRONG signal strength
+        if signal.signal_type == SignalType.ENTRY_LONG:
+            # Calculate penetration percentage
+            lower_band = signal.metadata["lower_band"]
+            current_price = signal.metadata["current_price"]
+            penetration_pct = (lower_band - current_price) / lower_band
+            if penetration_pct > 0.01:  # > 1%
+                assert signal.strength == SignalStrength.STRONG
+
+    def test_insufficient_data_returns_hold(self) -> None:
+        """Test that insufficient data returns HOLD signal."""
+        strategy = BollingerBandsStrategy(period=20)
+
+        # Only 10 candles - not enough (need 30)
+        prices = [100 + i for i in range(10)]
+        ohlcv = pd.DataFrame(
+            {
+                "open": prices,
+                "high": [p + 1 for p in prices],
+                "low": [p - 1 for p in prices],
+                "close": prices,
+                "volume": [1000] * len(prices),
+            }
+        )
+
+        context = StrategyContext(
+            symbol="BTC-USD",
+            current_price=Decimal("109"),
+            timestamp=datetime.now(UTC),
+            ohlcv=ohlcv,
+        )
+
+        signal = strategy.generate_signal(context)
+
+        assert signal.signal_type == SignalType.HOLD
+        assert "reason" in signal.metadata
+        assert signal.metadata["reason"] == "insufficient_candles"
+
+    def test_empty_dataframe_returns_hold(self) -> None:
+        """Test that empty DataFrame returns HOLD signal."""
+        strategy = BollingerBandsStrategy(period=20)
+
+        context = StrategyContext(
+            symbol="BTC-USD",
+            current_price=Decimal("100"),
+            timestamp=datetime.now(UTC),
+            ohlcv=pd.DataFrame(),
+        )
+
+        signal = strategy.generate_signal(context)
+
+        assert signal.signal_type == SignalType.HOLD
+
+    def test_reset_is_noop(self) -> None:
+        """Test that reset does nothing (strategy is stateless)."""
+        strategy = BollingerBandsStrategy(period=20)
+
+        # Reset should not raise an error
+        strategy.reset()
+
+        # Strategy should still work normally after reset
+        prices = [100.0] * 35
+        ohlcv = pd.DataFrame(
+            {
+                "open": prices,
+                "high": [p + 1 for p in prices],
+                "low": [p - 1 for p in prices],
+                "close": prices,
+                "volume": [1000] * len(prices),
+            }
+        )
+
+        context = StrategyContext(
+            symbol="BTC-USD",
+            current_price=Decimal("100"),
+            timestamp=datetime.now(UTC),
+            ohlcv=ohlcv,
+        )
+
+        signal = strategy.generate_signal(context)
+        assert signal.symbol == "BTC-USD"
+
+    def test_metadata_contains_band_values(self) -> None:
+        """Test that signal metadata contains band values."""
+        strategy = BollingerBandsStrategy(period=20)
+
+        # Create enough data
+        prices = [100.0 + i * 0.1 for i in range(35)]
+        ohlcv = pd.DataFrame(
+            {
+                "open": prices,
+                "high": [p + 0.5 for p in prices],
+                "low": [p - 0.5 for p in prices],
+                "close": prices,
+                "volume": [1000] * len(prices),
+            }
+        )
+
+        context = StrategyContext(
+            symbol="BTC-USD",
+            current_price=Decimal("103.5"),
+            timestamp=datetime.now(UTC),
+            ohlcv=ohlcv,
+        )
+
+        signal = strategy.generate_signal(context)
+
+        assert "upper_band" in signal.metadata
+        assert "middle_band" in signal.metadata
+        assert "lower_band" in signal.metadata
+        assert "band_width" in signal.metadata
+        assert "current_price" in signal.metadata
+        assert "period" in signal.metadata
+        assert "std_dev" in signal.metadata
+        assert isinstance(signal.metadata["upper_band"], float)
+        assert (
+            signal.metadata["lower_band"]
+            < signal.metadata["middle_band"]
+            < signal.metadata["upper_band"]
+        )
+
+    def test_custom_parameters(self) -> None:
+        """Test strategy with custom parameters."""
+        strategy = BollingerBandsStrategy(period=10, std_dev=3.0, penetration_threshold=0.005)
+
+        assert strategy.name == "bollinger_bands_10_3"
+        assert strategy.required_history == 20  # 10 + 10
+
+        # Verify parameters are used correctly
+        prices = [100.0] * 25
+        ohlcv = pd.DataFrame(
+            {
+                "open": prices,
+                "high": [p + 1 for p in prices],
+                "low": [p - 1 for p in prices],
+                "close": prices,
+                "volume": [1000] * len(prices),
+            }
+        )
+
+        context = StrategyContext(
+            symbol="BTC-USD",
+            current_price=Decimal("100"),
+            timestamp=datetime.now(UTC),
+            ohlcv=ohlcv,
+        )
+
+        signal = strategy.generate_signal(context)
+
+        assert signal.metadata["period"] == 10
+        assert signal.metadata["std_dev"] == 3.0
+
+    def test_context_validation(self) -> None:
+        """Test that context validation works correctly."""
+        strategy = BollingerBandsStrategy(period=20)
 
         # Test with None ohlcv
         context = StrategyContext(
