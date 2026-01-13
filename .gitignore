@@ -214,7 +214,7 @@ __marimo__/
 config.yaml
 *.db
 cryptrink.db
-data/
+/data/
 logs/
 
 # Secrets and API keys
