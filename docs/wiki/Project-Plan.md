@@ -94,36 +94,50 @@ src/cryptrink/exchange/
 
 ---
 
-## Phase 3: Data & Indicators
+## Phase 3: Data & Indicators - IN PROGRESS
 
 ### Objectives
 Implement data storage, historical data fetching, and technical indicators.
 
 ### Deliverables
-- [ ] Historical data fetcher from Revolut X
-- [ ] SQLite storage for OHLCV data
-- [ ] OHLCV aggregation from tick data
-- [ ] Core technical indicators:
-  - [ ] SMA (Simple Moving Average)
-  - [ ] EMA (Exponential Moving Average)
-  - [ ] RSI (Relative Strength Index)
-  - [ ] Bollinger Bands
-  - [ ] ATR (Average True Range)
-  - [ ] MACD
-- [ ] Data feed abstraction (live vs historical)
+- [x] Historical data fetcher from Revolut X (HistoricalDataFetcher, OHLCVAggregator)
+- [x] SQLite storage for OHLCV data (OHLCV model, OHLCVRepository)
+- [x] OHLCV aggregation from tick data (7 timeframes: 1m, 5m, 15m, 30m, 1h, 4h, 1d)
+- [x] Core technical indicators:
+  - [x] SMA (Simple Moving Average)
+  - [x] EMA (Exponential Moving Average)
+  - [x] RSI (Relative Strength Index)
+  - [x] Bollinger Bands
+  - [x] ATR (Average True Range)
+  - [x] MACD
+- [x] Data feed abstraction (live vs historical):
+  - [x] BaseDataFeed abstract interface
+  - [x] LiveDataFeed (real-time from exchange)
+  - [x] HistoricalDataFeed (from database)
+  - [x] HybridDataFeed (intelligent source selection)
 - [ ] Caching layer for indicator values
+
+### Files Created ✅
+```
+src/cryptrink/data/
+├── storage.py         # SQLAlchemy models and repository (307 lines, 15 tests)
+├── historical.py      # Historical data fetcher (256 lines, 17 tests)
+├── indicators.py      # Technical indicators (237 lines, 24 tests)
+└── feed.py            # Data feed abstraction (287 lines, 11 tests)
+```
 
 ### Files to Create
 ```
 src/cryptrink/data/
-├── storage.py         # SQLAlchemy models and repository
-├── historical.py      # Historical data fetcher
 └── cache.py           # Indicator caching
 
 src/cryptrink/signals/
-├── indicators.py      # Technical indicators
-└── generator.py       # Signal generation
+├── generator.py       # Signal generation
 ```
+
+### Test Coverage
+- 67 tests for Phase 3 components
+- All 170 total tests passing
 
 ---
 
