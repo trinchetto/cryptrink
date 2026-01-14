@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from cryptrink.core.logging import get_logger
-from cryptrink.execution.models import Order, Position, Trade
+from cryptrink.execution.models import EngineState, Order, Position, Trade
 
 logger = get_logger(__name__)
 
@@ -425,6 +425,95 @@ class PositionRepository:
             stmt = select(Position).order_by(Position.opened_at.desc()).limit(limit)
             result = await session.execute(stmt)
             return list(result.scalars().all())
+
+
+class EngineStateRepository:
+    """Repository for managing EngineState persistence.
+
+    Provides async methods for saving and loading engine state.
+    """
+
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        """Initialize the repository.
+
+        Args:
+            session_factory: SQLAlchemy async session factory.
+        """
+        self._session_factory = session_factory
+
+    async def save_state(self, engine_state: EngineState) -> EngineState:
+        """Save or update engine state.
+
+        Args:
+            engine_state: EngineState model to save.
+
+        Returns:
+            The saved engine state.
+        """
+        async with self._session_factory() as session:
+            # Check if state already exists
+            stmt = select(EngineState).where(EngineState.engine_id == engine_state.engine_id)
+            result = await session.execute(stmt)
+            existing = result.scalar_one_or_none()
+
+            if existing:
+                # Update existing state
+                existing.is_running = engine_state.is_running
+                existing.initial_balance = engine_state.initial_balance
+                existing.current_balance = engine_state.current_balance
+                existing.max_position_size = engine_state.max_position_size
+                existing.max_open_positions = engine_state.max_open_positions
+                existing.signal_count = engine_state.signal_count
+                existing.execution_count = engine_state.execution_count
+                existing.updated_at = engine_state.updated_at
+                existing.last_signal_at = engine_state.last_signal_at
+                existing.state_metadata = engine_state.state_metadata
+                await session.commit()
+                await session.refresh(existing)
+                logger.debug("engine_state_updated", engine_id=engine_state.engine_id)
+                return existing
+            else:
+                # Create new state
+                session.add(engine_state)
+                await session.commit()
+                await session.refresh(engine_state)
+                logger.debug("engine_state_created", engine_id=engine_state.engine_id)
+                return engine_state
+
+    async def load_state(self, engine_id: str) -> EngineState | None:
+        """Load engine state by ID.
+
+        Args:
+            engine_id: Engine ID to load state for.
+
+        Returns:
+            The engine state if found, None otherwise.
+        """
+        async with self._session_factory() as session:
+            stmt = select(EngineState).where(EngineState.engine_id == engine_id)
+            result = await session.execute(stmt)
+            return result.scalar_one_or_none()
+
+    async def delete_state(self, engine_id: str) -> bool:
+        """Delete engine state.
+
+        Args:
+            engine_id: Engine ID to delete state for.
+
+        Returns:
+            True if state was deleted, False if not found.
+        """
+        async with self._session_factory() as session:
+            stmt = select(EngineState).where(EngineState.engine_id == engine_id)
+            result = await session.execute(stmt)
+            engine_state = result.scalar_one_or_none()
+
+            if engine_state:
+                await session.delete(engine_state)
+                await session.commit()
+                logger.debug("engine_state_deleted", engine_id=engine_id)
+                return True
+            return False
 
 
 async def init_execution_db(engine: AsyncEngine) -> None:

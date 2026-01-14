@@ -11,9 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from cryptrink.core.logging import get_logger
 from cryptrink.execution.base import BaseExecutor, ExecutionContext, ExecutionMode, ExecutionResult
+from cryptrink.execution.models import EngineState
 from cryptrink.execution.order_manager import OrderManager
 from cryptrink.execution.position_tracker import PositionTracker
-from cryptrink.execution.repository import OrderRepository
+from cryptrink.execution.repository import EngineStateRepository, OrderRepository
 from cryptrink.strategies.base import BaseStrategy, Signal, SignalStrength, SignalType
 
 logger = get_logger(__name__)
@@ -31,6 +32,7 @@ class TradingEngine:
         strategy: BaseStrategy,
         executor: BaseExecutor,
         session_factory: async_sessionmaker[AsyncSession],
+        engine_id: str | None = None,
         initial_balance: Decimal = Decimal("10000"),
         max_position_size: Decimal = Decimal("0.1"),  # 10% of balance per position
         max_open_positions: int = 5,
@@ -41,6 +43,7 @@ class TradingEngine:
             strategy: Trading strategy to use for signal generation.
             executor: Executor for placing orders (suggest, paper, or live).
             session_factory: SQLAlchemy async session factory for persistence.
+            engine_id: Optional unique engine ID for state persistence.
             initial_balance: Initial account balance.
             max_position_size: Maximum position size as fraction of balance (default 10%).
             max_open_positions: Maximum number of concurrent open positions.
@@ -53,10 +56,16 @@ class TradingEngine:
         self._max_position_size = max_position_size
         self._max_open_positions = max_open_positions
 
-        # Initialize order manager, position tracker, and order repository
+        # Engine identification
+        import uuid
+
+        self._engine_id = engine_id or str(uuid.uuid4())
+
+        # Initialize order manager, position tracker, and repositories
         self._order_manager = OrderManager(session_factory)
         self._position_tracker = PositionTracker(session_factory)
         self._order_repo = OrderRepository(session_factory)
+        self._state_repo = EngineStateRepository(session_factory)
 
         # Engine state
         self._is_running = False
@@ -65,6 +74,7 @@ class TradingEngine:
 
         logger.info(
             "trading_engine_initialized",
+            engine_id=self._engine_id,
             strategy=strategy.__class__.__name__,
             executor_mode=executor.mode.value,
             initial_balance=float(initial_balance),
@@ -268,6 +278,7 @@ class TradingEngine:
             return
 
         self._is_running = True
+        await self.save_state()
         logger.info("trading_engine_started")
 
     async def stop(self) -> None:
@@ -280,6 +291,7 @@ class TradingEngine:
             return
 
         self._is_running = False
+        await self.save_state()
         logger.info("trading_engine_stopped")
 
     async def reset(self, initial_balance: Decimal | None = None) -> None:
@@ -299,7 +311,92 @@ class TradingEngine:
         # Reset strategy state
         self._strategy.reset()
 
+        await self.save_state()
         logger.info("trading_engine_reset", initial_balance=float(self._initial_balance))
+
+    async def save_state(self) -> None:
+        """Save the current engine state to the database.
+
+        Persists all engine state including running status, balances, counters,
+        and configuration for recovery purposes.
+        """
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+
+        engine_state = EngineState(
+            engine_id=self._engine_id,
+            strategy_name=self._strategy.__class__.__name__,
+            executor_mode=self._executor.mode.value,
+            is_running=self._is_running,
+            initial_balance=str(self._initial_balance),
+            current_balance=str(self._current_balance),
+            max_position_size=str(self._max_position_size),
+            max_open_positions=self._max_open_positions,
+            signal_count=self._signal_count,
+            execution_count=self._execution_count,
+            created_at=now_ms,
+            updated_at=now_ms,
+            last_signal_at=None,
+        )
+
+        await self._state_repo.save_state(engine_state)
+        logger.debug("engine_state_saved", engine_id=self._engine_id)
+
+    @classmethod
+    async def load_state(
+        cls,
+        engine_id: str,
+        strategy: BaseStrategy,
+        executor: BaseExecutor,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> "TradingEngine | None":
+        """Load and restore engine state from the database.
+
+        Args:
+            engine_id: The engine ID to load state for.
+            strategy: Trading strategy to use.
+            executor: Executor to use.
+            session_factory: SQLAlchemy async session factory.
+
+        Returns:
+            TradingEngine instance with restored state, or None if not found.
+        """
+        state_repo = EngineStateRepository(session_factory)
+        engine_state = await state_repo.load_state(engine_id)
+
+        if engine_state is None:
+            logger.warning("engine_state_not_found", engine_id=engine_id)
+            return None
+
+        # Create engine with restored state
+        engine = cls(
+            strategy=strategy,
+            executor=executor,
+            session_factory=session_factory,
+            engine_id=engine_id,
+            initial_balance=engine_state.initial_balance_decimal,
+            max_position_size=engine_state.max_position_size_decimal,
+            max_open_positions=engine_state.max_open_positions,
+        )
+
+        # Restore runtime state
+        engine._current_balance = engine_state.current_balance_decimal
+        engine._is_running = engine_state.is_running
+        engine._signal_count = engine_state.signal_count
+        engine._execution_count = engine_state.execution_count
+
+        logger.info(
+            "engine_state_loaded",
+            engine_id=engine_id,
+            is_running=engine_state.is_running,
+            signal_count=engine_state.signal_count,
+        )
+
+        return engine
+
+    @property
+    def engine_id(self) -> str:
+        """Get the engine ID."""
+        return self._engine_id
 
     @property
     def is_running(self) -> bool:
@@ -329,7 +426,8 @@ class TradingEngine:
     def __repr__(self) -> str:
         """String representation of TradingEngine."""
         return (
-            f"TradingEngine(strategy={self._strategy.__class__.__name__}, "
+            f"TradingEngine(engine_id={self._engine_id!r}, "
+            f"strategy={self._strategy.__class__.__name__}, "
             f"mode={self._executor.mode.value}, "
             f"balance={self._current_balance}, "
             f"running={self._is_running})"

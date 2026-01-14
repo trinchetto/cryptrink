@@ -20,7 +20,12 @@ from cryptrink.execution.engine import TradingEngine
 from cryptrink.execution.models import Order, Position, Trade
 from cryptrink.execution.order_manager import OrderManager
 from cryptrink.execution.position_tracker import PositionTracker
-from cryptrink.execution.repository import OrderRepository, PositionRepository, TradeRepository
+from cryptrink.execution.repository import (
+    EngineStateRepository,
+    OrderRepository,
+    PositionRepository,
+    TradeRepository,
+)
 
 __all__ = [  # noqa: RUF022
     # Base classes and enums
@@ -41,6 +46,7 @@ __all__ = [  # noqa: RUF022
     "OrderRepository",
     "PositionRepository",
     "TradeRepository",
+    "EngineStateRepository",
     # Engine
     "TradingEngine",
 ]

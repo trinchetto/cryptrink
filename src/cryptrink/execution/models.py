@@ -291,3 +291,83 @@ class Position(Base):
     def net_pnl(self) -> Decimal:
         """Calculate net P&L (realized + unrealized - fees)."""
         return self.realized_pnl_decimal + self.unrealized_pnl_decimal - self.total_fees_decimal
+
+
+class EngineState(Base):
+    """Engine state tracking model for persistence and recovery.
+
+    Stores the state of the trading engine to enable recovery from interruptions.
+    Only one active state record should exist per engine instance.
+    """
+
+    __tablename__ = "engine_states"
+
+    # Primary key
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+
+    # Engine identification
+    engine_id: Mapped[str] = mapped_column(String(100), nullable=False, unique=True, index=True)
+    strategy_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    executor_mode: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    # Engine state
+    is_running: Mapped[bool] = mapped_column(nullable=False, default=False)
+    initial_balance: Mapped[str] = mapped_column(String(50), nullable=False)
+    current_balance: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    # Configuration
+    max_position_size: Mapped[str] = mapped_column(String(50), nullable=False)
+    max_open_positions: Mapped[int] = mapped_column(nullable=False)
+
+    # Counters
+    signal_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    execution_count: Mapped[int] = mapped_column(nullable=False, default=0)
+
+    # Timestamps (Unix timestamp in milliseconds)
+    created_at: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    updated_at: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    last_signal_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+    # Metadata (JSON as string)
+    state_metadata: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+
+    def __repr__(self) -> str:
+        """String representation of EngineState."""
+        return (
+            f"EngineState(engine_id={self.engine_id!r}, strategy={self.strategy_name}, "
+            f"mode={self.executor_mode}, running={self.is_running})"
+        )
+
+    @property
+    def initial_balance_decimal(self) -> Decimal:
+        """Get initial balance as Decimal."""
+        return Decimal(self.initial_balance)
+
+    @property
+    def current_balance_decimal(self) -> Decimal:
+        """Get current balance as Decimal."""
+        return Decimal(self.current_balance)
+
+    @property
+    def max_position_size_decimal(self) -> Decimal:
+        """Get max position size as Decimal."""
+        return Decimal(self.max_position_size)
+
+    @property
+    def created_datetime(self) -> datetime:
+        """Get created_at as datetime object."""
+        return datetime.fromtimestamp(self.created_at / 1000.0, tz=UTC)
+
+    @property
+    def updated_datetime(self) -> datetime:
+        """Get updated_at as datetime object."""
+        return datetime.fromtimestamp(self.updated_at / 1000.0, tz=UTC)
+
+    @property
+    def last_signal_datetime(self) -> datetime | None:
+        """Get last_signal_at as datetime object."""
+        return (
+            datetime.fromtimestamp(self.last_signal_at / 1000.0, tz=UTC)
+            if self.last_signal_at
+            else None
+        )
