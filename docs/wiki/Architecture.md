@@ -55,33 +55,43 @@ cryptrink backtest sma_crossover BTC-EUR --start 2024-01-01
 cryptrink suggest mean_reversion ETH-EUR
 ```
 
-### 2. Trading Engine (🚧 Next Phase)
+### 2. Trading Engine (✅ Implemented)
 
 The core orchestration layer that coordinates all trading activities.
 
-#### Strategy Manager (Partially Implemented)
+#### TradingEngine (✅ Implemented)
+- **Main Orchestrator**: Coordinates strategy, executor, order manager, and position tracker
+- **Signal Processing**: Processes market data and generates trading signals via strategies
+- **State Management**: Saves and loads engine state for crash recovery
+- **Performance Tracking**: Aggregates P&L, position metrics, and execution statistics
+
+#### Strategy Manager (✅ Implemented)
 - **Strategy Framework** (✅): Base classes, signal generation
 - **Strategy Registry** (✅): Dynamic strategy loading
 - **Implemented Strategies** (✅):
   - SMA Crossover (trend following)
   - RSI Mean Reversion
   - Bollinger Bands Mean Reversion
-- **Strategy Execution Loop** (⏸️): Pending Phase 5
+- **Strategy Execution Loop** (✅): Integrated into TradingEngine
 
-#### Order Manager (⏸️ Pending Phase 5)
-- Tracks order lifecycle (pending → open → filled/cancelled)
-- Handles partial fills
-- Maintains order history
+#### Order Manager (✅ Implemented)
+- Tracks order lifecycle (pending → submitted → filled/cancelled/rejected)
+- Handles partial fills with filled_quantity tracking
+- Maintains order history in database
+- Async repository pattern with OrderRepository
 
-#### Position Tracker (⏸️ Pending Phase 5)
-- Tracks current positions per symbol
-- Calculates unrealized P&L
-- Provides position sizing context
+#### Position Tracker (✅ Implemented)
+- Tracks current positions per symbol with entry price
+- Calculates realized and unrealized P&L
+- Maintains position history in database
+- Provides position sizing context to executors
+- Async repository pattern with PositionRepository
 
-#### State Persistence (⏸️ Pending Phase 5)
-- Saves state to database for crash recovery
-- Supports idempotent order placement
-- Reconciles with exchange on restart
+#### State Persistence (✅ Implemented)
+- Saves complete engine state to database (EngineState model)
+- Supports crash recovery via TradingEngine.load_state()
+- Auto-saves on lifecycle events (start/stop/reset)
+- Reconciles with exchange on restart via LiveExecutor.sync_state()
 
 ### 3. Data Layer
 
@@ -239,27 +249,32 @@ quantity = Decimal("0.001")
 
 Avoids floating-point precision issues.
 
-## Execution Modes
+## Execution Modes (✅ Implemented)
 
-### Live Mode
-- Real orders on Revolut X
+### Live Mode (✅ Implemented - LiveExecutor)
+- Real orders on Revolut X via create_order() API
 - Real money at risk
 - Full risk management active
+- Order tracking and state synchronization
+- Type conversion between execution and exchange enums
 
-### Paper Mode
-- Simulated execution
-- Tracks virtual positions
-- Uses real market data
+### Paper Mode (✅ Implemented - PaperExecutor)
+- Simulated execution with instant fills
+- Tracks virtual positions and balance
+- Uses real market data for pricing
+- Validates orders against simulated balance
+- Full position and P&L tracking
 
-### Backtest Mode
+### Suggest Mode (✅ Implemented - SuggestExecutor)
+- Generates signals only
+- No order execution or balance tracking
+- Outputs trade recommendations with metadata
+- Useful for testing strategy logic
+
+### Backtest Mode (⏸️ Planned - Phase 7)
 - Historical data replay
 - Simulated fills with slippage
 - Performance analysis
-
-### Suggest Mode
-- Generates signals only
-- No order execution
-- Outputs recommendations
 
 ## Data Flow
 

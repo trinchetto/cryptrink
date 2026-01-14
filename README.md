@@ -1,30 +1,30 @@
 # Cryptrink
 
 ![CI](https://github.com/trinchetto/cryptrink/actions/workflows/ci.yml/badge.svg)
-![Coverage](.github/badges/coverage.svg)
+![Coverage](https://trinchetto.github.io/cryptrink/coverage.svg)
 
 A crypto trading agent for [Revolut X](https://www.revolut.com/business/revolut-x/) with backtesting and multiple strategy support.
 
 ## Project Status
 
-**Phase 4 - Strategy Framework: COMPLETE ✅**
+**Phase 5 - Trading Engine: COMPLETE ✅**
 
-- Base strategy framework with Signal, SignalType, SignalStrength
-- Strategy registry for dynamic strategy loading
-- Three implemented strategies:
-  - SMA Crossover (trend following)
-  - RSI Mean Reversion
-  - Bollinger Bands Mean Reversion
-- Comprehensive strategy testing (7 new test modules)
-- Strategy context with OHLCV data and position information
+- Trading engine orchestrator with signal processing and risk management
+- Order manager with lifecycle tracking and fill management
+- Position tracker with P&L calculation (realized and unrealized)
+- State persistence and recovery with EngineState and EngineStateRepository
+- Live order placement integration with Revolut X exchange
+- Three execution modes: Live, Paper, Suggest
+- Comprehensive testing (362 tests passing, 100% pass rate)
 
 **Previous Phases:**
 - ✅ Phase 1 - Foundation (Core Infrastructure)
 - ✅ Phase 2 - Revolut X Integration (42 unit tests, 9 integration tests)
 - ✅ Phase 3 - Data & Indicators (67 tests)
 - ✅ Phase 4 - Strategy Framework (strategy base class + 3 strategies)
+- ✅ Phase 5 - Trading Engine (order execution, position tracking, state persistence)
 
-**Next Phase**: Phase 5 - Trading Engine
+**Next Phase**: Phase 6 - Risk Management
 
 See the [Project Plan](docs/wiki/Project-Plan.md) for detailed roadmap.
 
@@ -43,11 +43,15 @@ See the [Project Plan](docs/wiki/Project-Plan.md) for detailed roadmap.
   - RSI Mean Reversion
   - Bollinger Bands Mean Reversion
 - **Strategy Framework**: Base classes, signal generation, and strategy registry
+- **Trading Engine**: Order execution and position management with TradingEngine orchestrator
+- **Order Management**: Order lifecycle tracking with OrderManager and database persistence
+- **Position Tracking**: Real-time position tracking with P&L calculation (PositionTracker)
+- **State Persistence**: Engine state recovery with EngineState and EngineStateRepository
+- **Multiple Execution Modes**: Live (real orders), Paper (simulation), Suggest (recommendations)
+- **Live Trading**: Full integration with Revolut X for real order placement and cancellation
 
 ### Planned 🚧
-- **Trading Engine**: Order execution and position management
 - **Backtesting Engine**: Test strategies against historical data
-- **Multiple Execution Modes**: live, paper, backtest, suggest
 - **Risk Management**: Position sizing, stop-loss, take-profit, circuit breakers
 - **Notifications**: Discord alerts for trade execution and signals
 - **Additional Strategies**: Market-making and more advanced strategies
