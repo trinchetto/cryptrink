@@ -105,7 +105,7 @@ class LiveExecutor(BaseExecutor):
         try:
             # TODO: Implement place_order in RevolutX client (Step 6).
             raise NotImplementedError(
-                "Live order placement not yet implemented. " "This will be added in Phase 5 Step 6."
+                "Live order placement not yet implemented. This will be added in Phase 5 Step 6."
             )
 
         except Exception as e:
@@ -140,8 +140,7 @@ class LiveExecutor(BaseExecutor):
         try:
             # TODO: Implement cancel_order in RevolutX client (Step 6).
             raise NotImplementedError(
-                "Live order cancellation not yet implemented. "
-                "This will be added in Phase 5 Step 6."
+                "Live order cancellation not yet implemented. This will be added in Phase 5 Step 6."
             )
 
         except Exception as e:

@@ -142,7 +142,7 @@ class TestOrderManager:
         )
 
         # First partial fill
-        updated1, trade1 = await order_manager.record_fill(
+        updated1, _trade1 = await order_manager.record_fill(
             order_id=order.order_id,
             quantity=Decimal("1"),
             price=Decimal("50000"),
@@ -153,7 +153,7 @@ class TestOrderManager:
         assert updated1.average_fill_price_decimal == Decimal("50000")
 
         # Second partial fill
-        updated2, trade2 = await order_manager.record_fill(
+        updated2, _trade2 = await order_manager.record_fill(
             order_id=order.order_id,
             quantity=Decimal("1"),
             price=Decimal("51000"),
@@ -165,7 +165,7 @@ class TestOrderManager:
         assert updated2.average_fill_price_decimal == Decimal("50500")
 
         # Final fill
-        updated3, trade3 = await order_manager.record_fill(
+        updated3, _trade3 = await order_manager.record_fill(
             order_id=order.order_id,
             quantity=Decimal("1"),
             price=Decimal("49000"),
