@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from cryptrink.core.logging import get_logger
-from cryptrink.execution.models import Order, Trade
+from cryptrink.execution.models import Order, Position, Trade
 
 logger = get_logger(__name__)
 
@@ -289,6 +289,140 @@ class TradeRepository:
         """
         async with self._session_factory() as session:
             stmt = select(Trade).order_by(Trade.executed_at.desc()).limit(limit)
+            result = await session.execute(stmt)
+            return list(result.scalars().all())
+
+
+class PositionRepository:
+    """Repository for managing Position persistence.
+
+    Provides async methods for creating, reading, updating, and querying positions.
+    """
+
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        """Initialize the repository.
+
+        Args:
+            session_factory: SQLAlchemy async session factory.
+        """
+        self._session_factory = session_factory
+
+    async def create(self, position: Position) -> Position:
+        """Create a new position in the database.
+
+        Args:
+            position: Position model to create.
+
+        Returns:
+            The created position with ID assigned.
+        """
+        async with self._session_factory() as session:
+            session.add(position)
+            await session.commit()
+            await session.refresh(position)
+            logger.debug(
+                "position_created", position_id=position.position_id, symbol=position.symbol
+            )
+            return position
+
+    async def get_by_position_id(self, position_id: str) -> Position | None:
+        """Get a position by its position ID.
+
+        Args:
+            position_id: The position ID to search for.
+
+        Returns:
+            The position if found, None otherwise.
+        """
+        async with self._session_factory() as session:
+            stmt = select(Position).where(Position.position_id == position_id)
+            result = await session.execute(stmt)
+            return result.scalar_one_or_none()
+
+    async def update(self, position: Position) -> Position:
+        """Update an existing position.
+
+        Args:
+            position: Position model with updated values.
+
+        Returns:
+            The updated position.
+        """
+        async with self._session_factory() as session:
+            session.add(position)
+            await session.commit()
+            await session.refresh(position)
+            logger.debug(
+                "position_updated", position_id=position.position_id, status=position.status
+            )
+            return position
+
+    async def get_open_positions(self, symbol: str | None = None) -> list[Position]:
+        """Get all open positions.
+
+        Args:
+            symbol: Optional symbol to filter by.
+
+        Returns:
+            List of open positions.
+        """
+        async with self._session_factory() as session:
+            stmt = select(Position).where(Position.status == "open")
+            if symbol:
+                stmt = stmt.where(Position.symbol == symbol)
+            stmt = stmt.order_by(Position.opened_at.desc())
+
+            result = await session.execute(stmt)
+            return list(result.scalars().all())
+
+    async def get_positions_by_symbol(
+        self,
+        symbol: str,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        status: str | None = None,
+    ) -> list[Position]:
+        """Get positions for a symbol within a time range.
+
+        Args:
+            symbol: Trading symbol.
+            start_time: Optional start time filter.
+            end_time: Optional end time filter.
+            status: Optional status filter (open, closed).
+
+        Returns:
+            List of positions matching the criteria.
+        """
+        async with self._session_factory() as session:
+            stmt = select(Position).where(Position.symbol == symbol)
+
+            if status:
+                stmt = stmt.where(Position.status == status)
+
+            if start_time:
+                start_ms = int(start_time.timestamp() * 1000)
+                stmt = stmt.where(Position.opened_at >= start_ms)
+
+            if end_time:
+                end_ms = int(end_time.timestamp() * 1000)
+                stmt = stmt.where(Position.opened_at <= end_ms)
+
+            stmt = stmt.order_by(Position.opened_at.desc())
+
+            result = await session.execute(stmt)
+            return list(result.scalars().all())
+
+    async def get_recent_positions(self, limit: int = 50) -> list[Position]:
+        """Get recent positions.
+
+        Args:
+            limit: Maximum number of positions to return.
+
+        Returns:
+            List of recent positions.
+        """
+        async with self._session_factory() as session:
+            stmt = select(Position).order_by(Position.opened_at.desc()).limit(limit)
             result = await session.execute(stmt)
             return list(result.scalars().all())
 

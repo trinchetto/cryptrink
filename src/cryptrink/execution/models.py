@@ -185,3 +185,109 @@ class Trade(Base):
     def notional_value(self) -> Decimal:
         """Calculate the notional value of the trade."""
         return self.quantity_decimal * self.price_decimal
+
+
+class Position(Base):
+    """Position tracking model.
+
+    Tracks open and closed positions with P&L calculation.
+    Uses FIFO accounting for partial position closes.
+    """
+
+    __tablename__ = "positions"
+
+    # Primary key
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+
+    # Position identification
+    position_id: Mapped[str] = mapped_column(String(100), nullable=False, unique=True, index=True)
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    side: Mapped[str] = mapped_column(String(10), nullable=False)  # long, short
+
+    # Position state
+    status: Mapped[str] = mapped_column(String(20), nullable=False, index=True)  # open, closed
+
+    # Quantities and prices (stored as strings for precision)
+    quantity: Mapped[str] = mapped_column(String(50), nullable=False)
+    entry_price: Mapped[str] = mapped_column(String(50), nullable=False)
+    exit_price: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
+    # P&L tracking
+    realized_pnl: Mapped[str] = mapped_column(String(50), nullable=False, default="0")
+    unrealized_pnl: Mapped[str] = mapped_column(String(50), nullable=False, default="0")
+
+    # Fees
+    total_fees: Mapped[str] = mapped_column(String(50), nullable=False, default="0")
+    fee_currency: Mapped[str | None] = mapped_column(String(10), nullable=True)
+
+    # Timestamps (Unix timestamp in milliseconds)
+    opened_at: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    closed_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+
+    # Entry/exit order tracking
+    entry_order_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    exit_order_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+
+    # Strategy information
+    strategy_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    # Metadata
+    position_metadata: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+
+    def __repr__(self) -> str:
+        """String representation of Position."""
+        return (
+            f"Position(position_id={self.position_id!r}, symbol={self.symbol!r}, "
+            f"side={self.side}, status={self.status}, quantity={self.quantity}, "
+            f"entry_price={self.entry_price})"
+        )
+
+    @property
+    def quantity_decimal(self) -> Decimal:
+        """Get quantity as Decimal."""
+        return Decimal(self.quantity)
+
+    @property
+    def entry_price_decimal(self) -> Decimal:
+        """Get entry price as Decimal."""
+        return Decimal(self.entry_price)
+
+    @property
+    def exit_price_decimal(self) -> Decimal | None:
+        """Get exit price as Decimal."""
+        return Decimal(self.exit_price) if self.exit_price else None
+
+    @property
+    def realized_pnl_decimal(self) -> Decimal:
+        """Get realized P&L as Decimal."""
+        return Decimal(self.realized_pnl)
+
+    @property
+    def unrealized_pnl_decimal(self) -> Decimal:
+        """Get unrealized P&L as Decimal."""
+        return Decimal(self.unrealized_pnl)
+
+    @property
+    def total_fees_decimal(self) -> Decimal:
+        """Get total fees as Decimal."""
+        return Decimal(self.total_fees)
+
+    @property
+    def opened_datetime(self) -> datetime:
+        """Get opened_at as datetime object."""
+        return datetime.fromtimestamp(self.opened_at / 1000.0, tz=UTC)
+
+    @property
+    def closed_datetime(self) -> datetime | None:
+        """Get closed_at as datetime object."""
+        return datetime.fromtimestamp(self.closed_at / 1000.0, tz=UTC) if self.closed_at else None
+
+    @property
+    def notional_value(self) -> Decimal:
+        """Calculate the notional value of the position."""
+        return self.quantity_decimal * self.entry_price_decimal
+
+    @property
+    def net_pnl(self) -> Decimal:
+        """Calculate net P&L (realized + unrealized - fees)."""
+        return self.realized_pnl_decimal + self.unrealized_pnl_decimal - self.total_fees_decimal
