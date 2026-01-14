@@ -16,6 +16,7 @@ from cryptrink.execution.base import (
     OrderStatus,
     OrderType,
 )
+from cryptrink.execution.engine import TradingEngine
 from cryptrink.execution.models import Order, Position, Trade
 from cryptrink.execution.order_manager import OrderManager
 from cryptrink.execution.position_tracker import PositionTracker
@@ -40,4 +41,6 @@ __all__ = [  # noqa: RUF022
     "OrderRepository",
     "PositionRepository",
     "TradeRepository",
+    # Engine
+    "TradingEngine",
 ]
