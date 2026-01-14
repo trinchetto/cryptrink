@@ -15,6 +15,9 @@ from cryptrink.execution.base import (
     OrderSide,
     OrderStatus,
     OrderType,
+    calculate_quantity,
+    determine_order_side,
+    validate_order,
 )
 from cryptrink.execution.engine import TradingEngine
 from cryptrink.execution.models import Order, Position, Trade
@@ -36,6 +39,10 @@ __all__ = [  # noqa: RUF022
     "OrderSide",
     "OrderStatus",
     "OrderType",
+    # Utility functions
+    "calculate_quantity",
+    "determine_order_side",
+    "validate_order",
     # Models
     "Order",
     "Position",

@@ -11,10 +11,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 
 if TYPE_CHECKING:
-    from cryptrink.strategies.base import Signal
+    from cryptrink.strategies.base import Signal, SignalType
 
 
 class ExecutionMode(str, Enum):
@@ -191,3 +191,105 @@ class BaseExecutor(ABC):
     def __repr__(self) -> str:
         """Return string representation."""
         return f"{self.__class__.__name__}(mode={self._mode.value})"
+
+
+class _ValidationResult(TypedDict):
+    """Result of order validation."""
+
+    valid: bool
+    reason: str
+
+
+def determine_order_side(signal_type: SignalType) -> OrderSide:
+    """Determine order side from signal type.
+
+    Args:
+        signal_type: Trading signal type.
+
+    Returns:
+        Order side (BUY or SELL).
+    """
+    from cryptrink.strategies.base import SignalType as ST
+
+    if signal_type in (ST.ENTRY_LONG, ST.EXIT_SHORT):
+        return OrderSide.BUY
+    return OrderSide.SELL
+
+
+def calculate_quantity(
+    context: ExecutionContext,
+    order_side: OrderSide,
+    position_size: Decimal | None = None,
+) -> Decimal:
+    """Calculate order quantity for execution.
+
+    Simplified calculation - Phase 6 will implement proper position sizing.
+
+    Args:
+        context: Execution context with balance and price info.
+        order_side: Order side (BUY or SELL).
+        position_size: Current position size (for SELL orders), optional.
+
+    Returns:
+        Order quantity.
+    """
+    if order_side == OrderSide.SELL:
+        # For sells, use current position size
+        if position_size is not None and position_size > 0:
+            return position_size
+        if context.has_position and context.position_size > 0:
+            return context.position_size
+        return Decimal("0")
+
+    # For buys, use 10% of available balance
+    allocation = Decimal("0.1")
+    notional_value = context.available_balance * allocation
+    quantity = notional_value / context.current_price
+
+    # Round to 8 decimal places
+    return quantity.quantize(Decimal("0.00000001"))
+
+
+def validate_order(
+    order_side: OrderSide,
+    quantity: Decimal,
+    context: ExecutionContext,
+    balance: Decimal | None = None,
+) -> _ValidationResult:
+    """Validate order before execution.
+
+    Args:
+        order_side: Order side (BUY or SELL).
+        quantity: Order quantity.
+        context: Execution context with position and balance info.
+        balance: Optional override for balance (used by paper executor).
+
+    Returns:
+        Validation result with 'valid' bool and 'reason' string.
+    """
+    if quantity <= 0:
+        return {"valid": False, "reason": "Invalid quantity (must be > 0)"}
+
+    effective_balance = balance if balance is not None else context.available_balance
+
+    if order_side == OrderSide.BUY:
+        # Check if we have enough balance
+        required_balance = quantity * context.current_price
+        if required_balance > effective_balance:
+            return {
+                "valid": False,
+                "reason": f"Insufficient balance (required: {required_balance}, available: {effective_balance})",
+            }
+
+    elif order_side == OrderSide.SELL:
+        # Check if we have a position to sell
+        if not context.has_position:
+            return {"valid": False, "reason": "No position to sell"}
+
+        if quantity > context.position_size:
+            return {
+                "valid": False,
+                "reason": f"Insufficient position (requested: {quantity}, available: {context.position_size})",
+            }
+
+    return {"valid": True, "reason": ""}

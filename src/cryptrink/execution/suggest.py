@@ -6,7 +6,6 @@ could be executed, but does not actually place any orders.
 
 from __future__ import annotations
 
-from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from cryptrink.core.logging import get_logger
@@ -15,9 +14,10 @@ from cryptrink.execution.base import (
     ExecutionContext,
     ExecutionMode,
     ExecutionResult,
-    OrderSide,
     OrderStatus,
     OrderType,
+    calculate_quantity,
+    determine_order_side,
 )
 from cryptrink.strategies.base import SignalType
 
@@ -75,11 +75,11 @@ class SuggestExecutor(BaseExecutor):
         suggestion_id = f"SUGGEST-{self._suggestion_counter:06d}"
 
         # Determine order side and type
-        order_side = self._determine_order_side(signal.signal_type)
+        order_side = determine_order_side(signal.signal_type)
         order_type = OrderType.MARKET  # For now, always suggest market orders
 
         # Calculate suggested quantity (simplified - Phase 6 will have proper position sizing)
-        quantity = self._calculate_quantity(context, signal)
+        quantity = calculate_quantity(context, order_side)
 
         # Calculate suggested price
         suggested_price = signal.price if signal.price else context.current_price
@@ -147,43 +147,3 @@ class SuggestExecutor(BaseExecutor):
         Suggest mode has no state to sync since it doesn't execute orders.
         """
         logger.debug("suggest_mode_sync_state_noop")
-
-    def _determine_order_side(self, signal_type: SignalType) -> OrderSide:
-        """Determine order side from signal type.
-
-        Args:
-            signal_type: Type of trading signal.
-
-        Returns:
-            Order side (BUY or SELL).
-        """
-        if signal_type in (SignalType.ENTRY_LONG, SignalType.EXIT_SHORT):
-            return OrderSide.BUY
-        return OrderSide.SELL
-
-    def _calculate_quantity(
-        self,
-        context: ExecutionContext,
-        signal: Signal,
-    ) -> Decimal:
-        """Calculate suggested order quantity.
-
-        This is a simplified calculation. Phase 6 (Risk Management) will
-        implement proper position sizing algorithms.
-
-        Args:
-            context: Execution context with balance info.
-            signal: Trading signal (reserved for future use).
-
-        Returns:
-            Suggested order quantity.
-        """
-        # Simple approach: use 10% of available balance
-        allocation = Decimal("0.1")  # 10%
-        notional_value = context.available_balance * allocation
-
-        # Convert to quantity based on current price
-        quantity = notional_value / context.current_price
-
-        # Round to reasonable precision (8 decimal places for crypto)
-        return quantity.quantize(Decimal("0.00000001"))

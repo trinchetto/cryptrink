@@ -6,7 +6,6 @@ RevolutX API client. Use with caution as this involves real money.
 
 from __future__ import annotations
 
-from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from cryptrink.core.logging import get_logger
@@ -27,6 +26,9 @@ from cryptrink.execution.base import (
     OrderSide,
     OrderStatus,
     OrderType,
+    calculate_quantity,
+    determine_order_side,
+    validate_order,
 )
 from cryptrink.strategies.base import SignalType
 
@@ -92,12 +94,12 @@ class LiveExecutor(BaseExecutor):
             )
 
         # Determine order details
-        order_side = self._determine_order_side(signal.signal_type)
+        order_side = determine_order_side(signal.signal_type)
         order_type = OrderType.MARKET  # Start with market orders only
-        quantity = self._calculate_quantity(context, signal, order_side)
+        quantity = calculate_quantity(context, order_side)
 
         # Validate order before submission
-        validation_result = self._validate_order(order_side, quantity, context)
+        validation_result = validate_order(order_side, quantity, context)
         if not validation_result["valid"]:
             return ExecutionResult(
                 success=False,
@@ -105,8 +107,8 @@ class LiveExecutor(BaseExecutor):
                 order_side=order_side,
                 quantity=quantity,
                 status=OrderStatus.REJECTED,
-                message=validation_result["reason"],  # type: ignore[arg-type]
-                error=validation_result["reason"],  # type: ignore[arg-type]
+                message=validation_result["reason"],
+                error=validation_result["reason"],
                 metadata={"signal_type": signal.signal_type.value},
             )
 
@@ -302,85 +304,6 @@ class LiveExecutor(BaseExecutor):
                 "live_state_sync_failed",
                 error=str(e),
             )
-
-    def _determine_order_side(self, signal_type: SignalType) -> OrderSide:
-        """Determine order side from signal type."""
-        if signal_type in (SignalType.ENTRY_LONG, SignalType.EXIT_SHORT):
-            return OrderSide.BUY
-        return OrderSide.SELL
-
-    def _calculate_quantity(
-        self,
-        context: ExecutionContext,
-        signal: Signal,
-        order_side: OrderSide,
-    ) -> Decimal:
-        """Calculate order quantity for live trading.
-
-        Simplified calculation - Phase 6 will implement proper position sizing.
-
-        Args:
-            context: Execution context.
-            signal: Trading signal (reserved for future use).
-            order_side: Order side.
-
-        Returns:
-            Order quantity.
-        """
-        if order_side == OrderSide.SELL:
-            # For sells, use current position size
-            if context.has_position:
-                return context.position_size
-            return Decimal("0")
-
-        # For buys, use 10% of available balance
-        allocation = Decimal("0.1")
-        notional_value = context.available_balance * allocation
-        quantity = notional_value / context.current_price
-
-        # Round to 8 decimal places
-        return quantity.quantize(Decimal("0.00000001"))
-
-    def _validate_order(
-        self,
-        order_side: OrderSide,
-        quantity: Decimal,
-        context: ExecutionContext,
-    ) -> dict[str, object]:
-        """Validate order before submission to exchange.
-
-        Args:
-            order_side: Order side.
-            quantity: Order quantity.
-            context: Execution context.
-
-        Returns:
-            Validation result with 'valid' bool and 'reason' string.
-        """
-        if quantity <= 0:
-            return {"valid": False, "reason": "Invalid quantity (must be > 0)"}
-
-        if order_side == OrderSide.BUY:
-            # Check if we have enough balance
-            required_balance = quantity * context.current_price
-            if required_balance > context.available_balance:
-                return {
-                    "valid": False,
-                    "reason": f"Insufficient balance (required: {required_balance}, available: {context.available_balance})",
-                }
-
-        elif order_side == OrderSide.SELL:
-            # Check if we have a position to sell
-            if not context.has_position:
-                return {"valid": False, "reason": "No position to sell"}
-
-            if quantity > context.position_size:
-                return {
-                    "valid": False,
-                    "reason": f"Insufficient position (requested: {quantity}, available: {context.position_size})",
-                }
-
-        return {"valid": True, "reason": ""}
 
     def _to_exchange_order_side(self, order_side: OrderSide) -> ExchangeOrderSide:
         """Convert execution order side to exchange order side."""

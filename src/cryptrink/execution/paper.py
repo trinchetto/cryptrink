@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
 from cryptrink.core.logging import get_logger
@@ -20,6 +20,9 @@ from cryptrink.execution.base import (
     OrderSide,
     OrderStatus,
     OrderType,
+    calculate_quantity,
+    determine_order_side,
+    validate_order,
 )
 from cryptrink.strategies.base import SignalType
 
@@ -27,11 +30,6 @@ if TYPE_CHECKING:
     from cryptrink.strategies.base import Signal
 
 logger = get_logger(__name__)
-
-
-class _ValidationResult(TypedDict):
-    valid: bool
-    reason: str
 
 
 class PaperExecutor(BaseExecutor):
@@ -103,13 +101,17 @@ class PaperExecutor(BaseExecutor):
         order_id = f"PAPER-{uuid4().hex[:12].upper()}"
 
         # Determine order details
-        order_side = self._determine_order_side(signal.signal_type)
+        order_side = determine_order_side(signal.signal_type)
         order_type = OrderType.MARKET
         execution_price = context.current_price
-        quantity = self._calculate_quantity(context, signal, order_side)
 
-        # Validate order
-        validation_result = self._validate_order(order_side, quantity, execution_price, context)
+        # Get position size from internal tracking for paper mode
+        position = self._positions.get(context.symbol)
+        position_size = cast(Decimal, position["quantity"]) if position else None
+        quantity = calculate_quantity(context, order_side, position_size)
+
+        # Validate order (paper mode uses self._balance instead of context balance)
+        validation_result = validate_order(order_side, quantity, context, balance=self._balance)
         if not validation_result["valid"]:
             return ExecutionResult(
                 success=False,
@@ -232,89 +234,6 @@ class PaperExecutor(BaseExecutor):
             "paper_executor_reset",
             initial_balance=float(self._initial_balance),
         )
-
-    def _determine_order_side(self, signal_type: SignalType) -> OrderSide:
-        """Determine order side from signal type."""
-        if signal_type in (SignalType.ENTRY_LONG, SignalType.EXIT_SHORT):
-            return OrderSide.BUY
-        return OrderSide.SELL
-
-    def _calculate_quantity(
-        self,
-        context: ExecutionContext,
-        signal: Signal,
-        order_side: OrderSide,
-    ) -> Decimal:
-        """Calculate order quantity for paper trading.
-
-        Simplified calculation - Phase 6 will implement proper position sizing.
-
-        Args:
-            context: Execution context.
-            signal: Trading signal (reserved for future use).
-            order_side: Order side (BUY or SELL).
-
-        Returns:
-            Order quantity.
-        """
-        if order_side == OrderSide.SELL:
-            # For sells, use current position size
-            position = self._positions.get(context.symbol)
-            if position:
-                return position["quantity"]  # type: ignore[return-value]
-            return Decimal("0")
-
-        # For buys, use 10% of balance
-        allocation = Decimal("0.1")
-        notional_value = self._balance * allocation
-        quantity = notional_value / context.current_price
-
-        # Round to 8 decimal places
-        return quantity.quantize(Decimal("0.00000001"))
-
-    def _validate_order(
-        self,
-        order_side: OrderSide,
-        quantity: Decimal,
-        price: Decimal,
-        context: ExecutionContext,
-    ) -> _ValidationResult:
-        """Validate order before execution.
-
-        Args:
-            order_side: Order side.
-            quantity: Order quantity.
-            price: Execution price.
-            context: Execution context.
-
-        Returns:
-            Validation result with 'valid' bool and 'reason' string.
-        """
-        if quantity <= 0:
-            return {"valid": False, "reason": "Invalid quantity (must be > 0)"}
-
-        if order_side == OrderSide.BUY:
-            # Check if we have enough balance
-            required_balance = quantity * price
-            if required_balance > self._balance:
-                return {
-                    "valid": False,
-                    "reason": f"Insufficient balance (required: {required_balance}, available: {self._balance})",
-                }
-
-        elif order_side == OrderSide.SELL:
-            # Check if we have a position to sell
-            position = self._positions.get(context.symbol)
-            if not position:
-                return {"valid": False, "reason": "No position to sell"}
-
-            if quantity > position["quantity"]:  # type: ignore[operator]
-                return {
-                    "valid": False,
-                    "reason": f"Insufficient position (requested: {quantity}, available: {position['quantity']})",
-                }
-
-        return {"valid": True, "reason": ""}
 
     def _execute_order(
         self,

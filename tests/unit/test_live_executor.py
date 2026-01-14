@@ -8,6 +8,8 @@ import pytest
 
 from cryptrink.exchange.base import Order, OrderSide, OrderStatus, OrderType
 from cryptrink.execution.base import ExecutionContext
+from cryptrink.execution.base import OrderSide as ExecutionOrderSide
+from cryptrink.execution.base import OrderStatus as ExecutionOrderStatus
 from cryptrink.execution.live import LiveExecutor
 from cryptrink.strategies.base import Signal, SignalStrength, SignalType
 
@@ -122,16 +124,16 @@ class TestLiveExecutor:
 
         assert result.success is True
         assert result.order_id == "ORDER-123"
-        assert result.order_side == OrderSide.BUY
-        assert result.status == OrderStatus.FILLED
+        assert result.order_side == ExecutionOrderSide.BUY
+        assert result.status == ExecutionOrderStatus.FILLED
         assert "ORDER-123" in live_executor._order_tracking
 
         # Verify exchange was called correctly
         mock_exchange.create_order.assert_called_once()
         call_kwargs = mock_exchange.create_order.call_args.kwargs
         assert call_kwargs["symbol"] == "BTC-USD"
-        assert call_kwargs["side"] == OrderSide.BUY
-        assert call_kwargs["order_type"] == OrderType.MARKET
+        assert call_kwargs["side"] == OrderSide.BUY  # Exchange enum
+        assert call_kwargs["order_type"] == OrderType.MARKET  # Exchange enum
 
     async def test_execute_signal_sell_success(
         self, live_executor, mock_exchange, sell_signal, execution_context
@@ -163,7 +165,7 @@ class TestLiveExecutor:
 
         assert result.success is True
         assert result.order_id == "ORDER-456"
-        assert result.order_side == OrderSide.SELL
+        assert result.order_side == ExecutionOrderSide.SELL
         assert result.quantity == Decimal("0.5")
 
     async def test_execute_signal_validation_failure_invalid_quantity(
@@ -173,7 +175,7 @@ class TestLiveExecutor:
         result = await live_executor.execute_signal(sell_signal, execution_context)
 
         assert result.success is False
-        assert result.status == OrderStatus.REJECTED
+        assert result.status == ExecutionOrderStatus.REJECTED
         # When no position, quantity calculation returns 0, which fails quantity validation
         assert "Invalid quantity" in result.message
         live_executor._client.create_order.assert_not_called()
@@ -188,7 +190,7 @@ class TestLiveExecutor:
         result = await live_executor.execute_signal(buy_signal, execution_context)
 
         assert result.success is False
-        assert result.status == OrderStatus.REJECTED
+        assert result.status == ExecutionOrderStatus.REJECTED
         assert "execution failed" in result.message
         assert "Exchange API error" in result.error
 
@@ -197,7 +199,7 @@ class TestLiveExecutor:
         # Add order to tracking
         live_executor._order_tracking["ORDER-123"] = {
             "order_id": "ORDER-123",
-            "status": OrderStatus.OPEN,
+            "status": ExecutionOrderStatus.SUBMITTED,
         }
 
         # Mock exchange response
@@ -221,7 +223,9 @@ class TestLiveExecutor:
         result = await live_executor.cancel_order("ORDER-123")
 
         assert result is True
-        assert live_executor._order_tracking["ORDER-123"]["status"] == OrderStatus.CANCELLED
+        assert (
+            live_executor._order_tracking["ORDER-123"]["status"] == ExecutionOrderStatus.CANCELLED
+        )
         mock_exchange.cancel_order.assert_called_once_with("ORDER-123")
 
     async def test_cancel_order_failure(self, live_executor, mock_exchange):
@@ -255,7 +259,7 @@ class TestLiveExecutor:
 
         status = await live_executor.get_order_status("ORDER-123")
 
-        assert status == OrderStatus.FILLED
+        assert status == ExecutionOrderStatus.FILLED
         mock_exchange.get_order.assert_called_once_with("ORDER-123")
 
     async def test_get_order_status_not_found(self, live_executor, mock_exchange):
@@ -271,11 +275,11 @@ class TestLiveExecutor:
         # Add tracked orders
         live_executor._order_tracking["ORDER-123"] = {
             "order_id": "ORDER-123",
-            "status": OrderStatus.PENDING,
+            "status": ExecutionOrderStatus.PENDING,
         }
         live_executor._order_tracking["ORDER-456"] = {
             "order_id": "ORDER-456",
-            "status": OrderStatus.PENDING,
+            "status": ExecutionOrderStatus.PENDING,
         }
 
         # Mock exchange response
@@ -319,15 +323,18 @@ class TestLiveExecutor:
         await live_executor.sync_state()
 
         # Verify statuses were updated
-        assert live_executor._order_tracking["ORDER-123"]["status"] == OrderStatus.OPEN
-        assert live_executor._order_tracking["ORDER-456"]["status"] == OrderStatus.FILLED
+        # Note: Exchange OrderStatus.OPEN maps to execution OrderStatus.SUBMITTED
+        assert (
+            live_executor._order_tracking["ORDER-123"]["status"] == ExecutionOrderStatus.SUBMITTED
+        )
+        assert live_executor._order_tracking["ORDER-456"]["status"] == ExecutionOrderStatus.FILLED
 
     async def test_sync_state_handles_missing_orders(self, live_executor, mock_exchange):
         """Test state sync handles orders that can't be found."""
         # Add tracked order
         live_executor._order_tracking["ORDER-999"] = {
             "order_id": "ORDER-999",
-            "status": OrderStatus.PENDING,
+            "status": ExecutionOrderStatus.PENDING,
         }
 
         # Mock exchange responses
@@ -342,37 +349,21 @@ class TestLiveExecutor:
 
     async def test_quantity_calculation_buy(self, live_executor, execution_context):
         """Test quantity calculation for buy orders."""
-        quantity = live_executor._calculate_quantity(
-            execution_context,
-            Signal(
-                signal_type=SignalType.ENTRY_LONG,
-                symbol="BTC-USD",
-                timestamp=datetime.now(UTC),
-                price=Decimal("50000"),
-                strength=SignalStrength.STRONG,
-            ),
-            OrderSide.BUY,
-        )
+        from cryptrink.execution.base import OrderSide, calculate_quantity
+
+        quantity = calculate_quantity(execution_context, OrderSide.BUY)
 
         # Should use 10% of balance: 10000 * 0.1 / 50000 = 0.02
         assert quantity == Decimal("0.02")
 
     async def test_quantity_calculation_sell(self, live_executor, execution_context):
         """Test quantity calculation for sell orders."""
+        from cryptrink.execution.base import OrderSide, calculate_quantity
+
         execution_context.has_position = True
         execution_context.position_size = Decimal("0.5")
 
-        quantity = live_executor._calculate_quantity(
-            execution_context,
-            Signal(
-                signal_type=SignalType.EXIT_LONG,
-                symbol="BTC-USD",
-                timestamp=datetime.now(UTC),
-                price=Decimal("50000"),
-                strength=SignalStrength.STRONG,
-            ),
-            OrderSide.SELL,
-        )
+        quantity = calculate_quantity(execution_context, OrderSide.SELL)
 
         # Should use full position size
         assert quantity == Decimal("0.5")
@@ -403,6 +394,6 @@ class TestLiveExecutor:
         tracked = live_executor._order_tracking["ORDER-123"]
         assert tracked["order_id"] == "ORDER-123"
         assert tracked["symbol"] == "BTC-USD"
-        assert tracked["side"] == OrderSide.BUY
+        assert tracked["side"] == ExecutionOrderSide.BUY
         assert tracked["signal_type"] == SignalType.ENTRY_LONG
         assert tracked["created_at"] is not None
