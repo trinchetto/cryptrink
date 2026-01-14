@@ -30,97 +30,206 @@ Strategies that provide liquidity and capture spreads.
 
 ## Implemented Strategies
 
-### SMA Crossover (Trend Following)
+### SMA Crossover (Trend Following) ✅
 
-**Description**: Generates buy signals when a fast moving average crosses above a slow moving average, and sell signals on the opposite crossover.
+**File**: `src/cryptrink/strategies/trend_following.py`
+
+**Class**: `SmaCrossoverStrategy`
+
+**Description**: Generates buy signals when a fast moving average crosses above a slow moving average, and sell signals on the opposite crossover. Uses crossover detection with state tracking to identify trend changes.
 
 **Parameters**:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `fast_period` | 10 | Fast SMA period |
-| `slow_period` | 30 | Slow SMA period |
-| `signal_threshold` | 0.001 | Minimum crossover distance |
+| `fast_period` | 10 | Fast SMA period in candles |
+| `slow_period` | 30 | Slow SMA period in candles |
 
 **Signals**:
-- **ENTRY_LONG**: Fast SMA crosses above Slow SMA
-- **EXIT_LONG**: Fast SMA crosses below Slow SMA
+- **ENTRY_LONG**: Fast SMA crosses above Slow SMA (bullish crossover)
+- **EXIT_LONG**: Fast SMA crosses below Slow SMA (bearish crossover)
 - **HOLD**: No crossover detected
 
+**Signal Strength Calculation**:
+- Based on percentage distance between fast and slow SMAs
+- `STRONG`: Distance > 2%
+- `MODERATE`: Distance between 1% and 2%
+- `WEAK`: Distance < 1%
+
+**Required History**: `slow_period + 1` candles (minimum 31 for defaults)
+
+**Timeframe**: 1h (configurable via `timeframe` property)
+
 **Example**:
 ```python
-from cryptrink.strategies.trend_following import SMACrossover
+from cryptrink.strategies.trend_following import SmaCrossoverStrategy
 
-strategy = SMACrossover(
+strategy = SmaCrossoverStrategy(
     fast_period=10,
     slow_period=30,
-    signal_threshold=0.001,
 )
+
+# Generate signal with context
+signal = strategy.generate_signal(context)
 ```
 
 ---
 
-### RSI Mean Reversion
+### RSI Mean Reversion ✅
 
-**Description**: Generates buy signals when RSI is oversold and sell signals when RSI is overbought.
+**File**: `src/cryptrink/strategies/mean_reversion.py`
+
+**Class**: `RsiMeanReversionStrategy`
+
+**Description**: Generates buy signals when RSI indicates oversold conditions and sell signals when overbought. Designed for mean reversion trading where prices are expected to return to average levels.
 
 **Parameters**:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `rsi_period` | 14 | RSI calculation period |
-| `overbought` | 70 | Overbought threshold |
-| `oversold` | 30 | Oversold threshold |
-| `exit_threshold` | 50 | Exit position threshold |
+| `period` | 14 | RSI calculation period in candles |
+| `oversold` | 30 | Oversold threshold (entry point) |
+| `overbought` | 70 | Overbought threshold (exit point) |
 
 **Signals**:
-- **ENTRY_LONG**: RSI < oversold (e.g., RSI < 30)
-- **EXIT_LONG**: RSI > exit_threshold (e.g., RSI > 50)
-- **ENTRY_SHORT**: RSI > overbought (e.g., RSI > 70)
-- **EXIT_SHORT**: RSI < exit_threshold (e.g., RSI < 50)
+- **ENTRY_LONG**: RSI < oversold (e.g., RSI < 30) - Price is oversold
+- **EXIT_LONG**: RSI > overbought (e.g., RSI > 70) - Price is overbought
+- **HOLD**: RSI between thresholds
+
+**Signal Strength Calculation**:
+- Based on how extreme the RSI reading is
+- For ENTRY_LONG:
+  - `STRONG`: RSI < 20 (extremely oversold)
+  - `MODERATE`: RSI 20-25
+  - `WEAK`: RSI 25-30
+- For EXIT_LONG:
+  - `STRONG`: RSI > 80 (extremely overbought)
+  - `MODERATE`: RSI 75-80
+  - `WEAK`: RSI 70-75
+
+**Required History**: `period + 1` candles (minimum 15 for default)
+
+**Timeframe**: 1h (configurable via `timeframe` property)
 
 **Example**:
 ```python
-from cryptrink.strategies.mean_reversion import RSIMeanReversion
+from cryptrink.strategies.mean_reversion import RsiMeanReversionStrategy
 
-strategy = RSIMeanReversion(
-    rsi_period=14,
-    overbought=70,
+strategy = RsiMeanReversionStrategy(
+    period=14,
     oversold=30,
+    overbought=70,
 )
+
+# Generate signal with context
+signal = strategy.generate_signal(context)
 ```
 
 ---
 
-### Bollinger Bands
+### Bollinger Bands ✅
 
-**Description**: Trades based on price position relative to Bollinger Bands, buying at the lower band and selling at the upper band.
+**File**: `src/cryptrink/strategies/mean_reversion.py`
+
+**Class**: `BollingerBandsStrategy`
+
+**Description**: Trades based on price position relative to Bollinger Bands, buying when price breaks below the lower band (oversold) and selling when it returns to or exceeds the middle band. Mean reversion strategy that assumes prices will return to the moving average.
 
 **Parameters**:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `period` | 20 | SMA period for middle band |
-| `std_dev` | 2.0 | Standard deviation multiplier |
-| `entry_threshold` | 0.0 | Distance past band to trigger |
+| `period` | 20 | SMA period for middle band in candles |
+| `std_dev` | 2.0 | Standard deviation multiplier for bands |
 
 **Signals**:
-- **ENTRY_LONG**: Price touches/crosses lower band
-- **EXIT_LONG**: Price touches middle or upper band
-- **ENTRY_SHORT**: Price touches/crosses upper band
-- **EXIT_SHORT**: Price touches middle or lower band
+- **ENTRY_LONG**: Price breaks below lower band (oversold condition)
+- **EXIT_LONG**: Price returns to or above middle band (mean reversion)
+- **HOLD**: Price within normal range
+
+**Signal Strength Calculation**:
+- Based on how far price penetrates below the lower band
+- For ENTRY_LONG:
+  - `STRONG`: Price > 1% below lower band
+  - `MODERATE`: Price 0.5-1% below lower band
+  - `WEAK`: Price 0-0.5% below lower band
+- For EXIT_LONG:
+  - `STRONG`: Price > 1% above middle band
+  - `MODERATE`: Price 0.5-1% above middle band
+  - `WEAK`: Price at or just above middle band
+
+**Required History**: `period + 1` candles (minimum 21 for default)
+
+**Timeframe**: 1h (configurable via `timeframe` property)
+
+**Band Calculation**:
+- Middle Band = SMA(close, period)
+- Upper Band = Middle Band + (std_dev × standard deviation)
+- Lower Band = Middle Band - (std_dev × standard deviation)
+
+**Example**:
+```python
+from cryptrink.strategies.mean_reversion import BollingerBandsStrategy
+
+strategy = BollingerBandsStrategy(
+    period=20,
+    std_dev=2.0,
+)
+
+# Generate signal with context
+signal = strategy.generate_signal(context)
+```
 
 ---
 
-### Spread Capture (Market Making)
+### Spread Capture (Market Making) 🚧
+
+**Status**: Not yet implemented (planned for Phase 9)
 
 **Description**: Places limit orders on both sides of the spread to capture the bid-ask difference.
 
-**Parameters**:
+**Planned Parameters**:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `spread_target` | 0.002 | Target spread (0.2%) |
 | `max_position` | 0.1 | Max position size (as % of capital) |
 | `rebalance_threshold` | 0.05 | Position imbalance to trigger rebalance |
 
-**Note**: Market making requires careful risk management and is not recommended for beginners.
+**Note**: Market making requires careful risk management and is not recommended for beginners. This strategy is deferred to a future phase.
+
+---
+
+## Using the Strategy Registry
+
+The strategy registry allows dynamic loading and instantiation of strategies.
+
+### Loading a Strategy
+
+```python
+from cryptrink.strategies.registry import StrategyRegistry
+
+# Get a strategy instance by name
+strategy = StrategyRegistry.get_strategy("sma_crossover")
+
+# With custom parameters
+strategy = StrategyRegistry.get_strategy(
+    "rsi_mean_reversion",
+    period=14,
+    oversold=30,
+    overbought=70
+)
+```
+
+### Registered Strategies
+
+Current registered strategies:
+- `"sma_crossover"` → `SmaCrossoverStrategy`
+- `"rsi_mean_reversion"` → `RsiMeanReversionStrategy`
+- `"bollinger_bands"` → `BollingerBandsStrategy`
+
+### Listing Available Strategies
+
+```python
+available = StrategyRegistry.list_strategies()
+print(available)  # ['sma_crossover', 'rsi_mean_reversion', 'bollinger_bands']
+```
 
 ---
 
@@ -207,10 +316,21 @@ class MyCustomStrategy(BaseStrategy):
 # In src/cryptrink/strategies/registry.py
 from cryptrink.strategies.my_custom import MyCustomStrategy
 
-STRATEGIES = {
-    "my_custom_strategy": MyCustomStrategy,
-    # ... other strategies
-}
+class StrategyRegistry:
+    _strategies = {
+        "my_custom_strategy": MyCustomStrategy,
+        # ... other strategies
+    }
+```
+
+Or register dynamically:
+
+```python
+# In your code
+from cryptrink.strategies.registry import StrategyRegistry
+from cryptrink.strategies.my_custom import MyCustomStrategy
+
+StrategyRegistry.register("my_custom_strategy", MyCustomStrategy)
 ```
 
 ### Step 3: Use in Configuration

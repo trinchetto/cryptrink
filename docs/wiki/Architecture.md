@@ -55,51 +55,69 @@ cryptrink backtest sma_crossover BTC-EUR --start 2024-01-01
 cryptrink suggest mean_reversion ETH-EUR
 ```
 
-### 2. Trading Engine
+### 2. Trading Engine (🚧 Next Phase)
 
 The core orchestration layer that coordinates all trading activities.
 
-#### Strategy Manager
-- Loads and validates strategies
-- Calls strategy.generate_signal() on each tick
-- Manages strategy lifecycle
+#### Strategy Manager (Partially Implemented)
+- **Strategy Framework** (✅): Base classes, signal generation
+- **Strategy Registry** (✅): Dynamic strategy loading
+- **Implemented Strategies** (✅):
+  - SMA Crossover (trend following)
+  - RSI Mean Reversion
+  - Bollinger Bands Mean Reversion
+- **Strategy Execution Loop** (⏸️): Pending Phase 5
 
-#### Order Manager
+#### Order Manager (⏸️ Pending Phase 5)
 - Tracks order lifecycle (pending → open → filled/cancelled)
 - Handles partial fills
 - Maintains order history
 
-#### Position Tracker
+#### Position Tracker (⏸️ Pending Phase 5)
 - Tracks current positions per symbol
 - Calculates unrealized P&L
 - Provides position sizing context
 
-#### State Persistence
+#### State Persistence (⏸️ Pending Phase 5)
 - Saves state to database for crash recovery
 - Supports idempotent order placement
 - Reconciles with exchange on restart
 
 ### 3. Data Layer
 
-#### Data Feed
-Abstract interface with implementations for:
-- **Live Feed**: Real-time data from Revolut X
-- **Historical Feed**: Stored data for backtesting
-- **Paper Feed**: Simulated data for paper trading
+#### Data Feed (✅ Implemented)
+Abstract `BaseDataFeed` interface with three implementations:
+- **LiveDataFeed**: Real-time data from Revolut X with optional storage
+- **HistoricalDataFeed**: Query stored OHLCV data from database
+- **HybridDataFeed**: Intelligent source selection (historical → live fallback)
 
-#### Storage
-SQLAlchemy-based persistence:
-- OHLCV candle data
-- Trade history
-- Order records
-- Strategy state
+All feeds support async operations and provide OHLCV data as pandas DataFrames.
 
-#### Indicators
-pandas-ta based technical analysis:
-- Moving averages (SMA, EMA)
-- Oscillators (RSI, Stochastic)
-- Volatility (Bollinger Bands, ATR)
-- Trend (MACD, ADX)
+#### Storage (✅ Implemented)
+SQLAlchemy 2.0 async ORM with repository pattern:
+- **OHLCV Model**: Stores candlestick data with Decimal precision
+- **OHLCVRepository**: Async operations for data access
+  - Time range queries
+  - Batch insert operations
+  - Symbol-based filtering
+- **Database**: SQLite for development, PostgreSQL-ready for production
+- **Decimal Storage**: Financial data stored as strings to avoid float errors
+
+#### Indicators (✅ Implemented)
+Custom pandas-based technical analysis (`src/cryptrink/data/indicators.py`):
+- **Moving averages**: SMA, EMA
+- **Oscillators**: RSI
+- **Volatility**: Bollinger Bands, ATR
+- **Trend**: MACD
+
+All indicators implemented as static methods returning pandas Series for efficient vectorized calculations.
+
+#### Historical Data (✅ Implemented)
+OHLCV aggregation from raw trades:
+- **HistoricalDataFetcher**: Fetch recent trades and aggregate to OHLCV
+- **OHLCVAggregator**: Convert tick data to candlesticks
+- **Supported Timeframes**: 1m, 5m, 15m, 30m, 1h, 4h, 1d
+- **Proper Bucketing**: Timestamp alignment and sorting
 
 ### 4. Exchange Layer
 
@@ -131,28 +149,52 @@ Headers:
 
 ## Design Patterns
 
-### 1. Abstract Base Classes
+### 1. Abstract Base Classes (✅ Implemented)
 
 All major components define abstract interfaces:
 
 ```python
+# Exchange interface
 class BaseExchange(ABC):
     @abstractmethod
     async def get_ticker(self, symbol: str) -> Ticker: ...
+    @abstractmethod
+    async def get_orderbook(self, symbol: str) -> OrderBook: ...
+    @abstractmethod
+    async def get_balances(self) -> dict[str, Balance]: ...
+    # ... more methods
 
+# Strategy interface
 class BaseStrategy(ABC):
+    @property
+    @abstractmethod
+    def name(self) -> str: ...
+
+    @property
+    @abstractmethod
+    def description(self) -> str: ...
+
     @abstractmethod
     def generate_signal(self, context: StrategyContext) -> Signal: ...
 
+# Data feed interface
 class BaseDataFeed(ABC):
     @abstractmethod
-    async def get_ohlcv(...) -> pd.DataFrame: ...
+    async def get_ohlcv(
+        self,
+        symbol: str,
+        timeframe: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> pd.DataFrame: ...
 ```
 
-This enables:
-- Paper trading (mock exchange)
-- Backtesting (historical data feed)
-- Future exchange additions
+**Benefits**:
+- Exchange abstraction (currently Revolut X, can add others)
+- Strategy abstraction (3 strategies implemented, easy to add more)
+- Data feed abstraction (live, historical, hybrid implementations)
+- Paper trading (mock exchange - future)
+- Backtesting (historical data feed - future)
 
 ### 2. Async/Await Throughout
 

@@ -7,22 +7,24 @@ A crypto trading agent for [Revolut X](https://www.revolut.com/business/revolut-
 
 ## Project Status
 
-**Phase 3 - Data & Indicators: COMPLETE ✅**
+**Phase 4 - Strategy Framework: COMPLETE ✅**
 
-- SQLite storage with async SQLAlchemy 2.0
-- OHLCV data aggregation (7 timeframes: 1m, 5m, 15m, 30m, 1h, 4h, 1d)
-- Technical indicators: SMA, EMA, RSI, Bollinger Bands, MACD, ATR
-- Data feed abstraction: LiveDataFeed, HistoricalDataFeed, HybridDataFeed
-- 67 new tests (170 total tests passing)
-- Decimal precision for financial data
-- Pandas integration for efficient calculations
+- Base strategy framework with Signal, SignalType, SignalStrength
+- Strategy registry for dynamic strategy loading
+- Three implemented strategies:
+  - SMA Crossover (trend following)
+  - RSI Mean Reversion
+  - Bollinger Bands Mean Reversion
+- Comprehensive strategy testing (7 new test modules)
+- Strategy context with OHLCV data and position information
 
 **Previous Phases:**
 - ✅ Phase 1 - Foundation (Core Infrastructure)
 - ✅ Phase 2 - Revolut X Integration (42 unit tests, 9 integration tests)
 - ✅ Phase 3 - Data & Indicators (67 tests)
+- ✅ Phase 4 - Strategy Framework (strategy base class + 3 strategies)
 
-**Next Phase**: Phase 4 - Strategy Framework
+**Next Phase**: Phase 5 - Trading Engine
 
 See the [Project Plan](docs/wiki/Project-Plan.md) for detailed roadmap.
 
@@ -36,13 +38,19 @@ See the [Project Plan](docs/wiki/Project-Plan.md) for detailed roadmap.
 - **OHLCV Aggregation**: Convert raw trades to candlesticks (7 timeframes)
 - **Technical Indicators**: SMA, EMA, RSI, Bollinger Bands, MACD, ATR
 - **Data Feeds**: Live, historical, and hybrid data access patterns
+- **Trading Strategies**: Three implemented strategies
+  - SMA Crossover (trend following)
+  - RSI Mean Reversion
+  - Bollinger Bands Mean Reversion
+- **Strategy Framework**: Base classes, signal generation, and strategy registry
 
 ### Planned 🚧
-- **Trading Strategies**: Trend following, mean reversion, and market-making
+- **Trading Engine**: Order execution and position management
 - **Backtesting Engine**: Test strategies against historical data
 - **Multiple Execution Modes**: live, paper, backtest, suggest
 - **Risk Management**: Position sizing, stop-loss, take-profit, circuit breakers
 - **Notifications**: Discord alerts for trade execution and signals
+- **Additional Strategies**: Market-making and more advanced strategies
 
 ## Prerequisites
 
@@ -70,6 +78,8 @@ See [Getting Started](docs/GETTING_STARTED.md) for detailed setup instructions.
 - [Project Wiki](docs/wiki/Home.md) - Project overview and status
 - [Architecture Design](docs/wiki/Architecture.md) - System architecture
 - [Project Plan](docs/wiki/Project-Plan.md) - Implementation roadmap
+- [Strategy Documentation](docs/wiki/Strategies.md) - Trading strategies guide
+- [Development Guide](docs/wiki/Development-Guide.md) - Contributing and development setup
 - [Deployment Guide](docs/wiki/Deployment.md) - Production deployment options
 
 ## Development

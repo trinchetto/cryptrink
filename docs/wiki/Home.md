@@ -52,15 +52,26 @@ Cryptrink is a crypto trading agent designed for [Revolut X](https://www.revolut
 - Pandas integration for efficient calculations
 - 67 tests (170 total tests passing)
 
-### Phase 4: Strategy Framework 🚧 NEXT
-- Strategy base class enhancements
-- SMA Crossover strategy (trend following)
-- RSI Mean Reversion strategy
-- Signal confidence scoring
-- Strategy parameter optimization hooks
+### Phase 4: Strategy Framework ✅ COMPLETE
+- Strategy base class with BaseStrategy interface
+- Signal generation framework (Signal, SignalType, SignalStrength)
+- Strategy registry for dynamic loading
+- Three implemented strategies:
+  - SMA Crossover (trend following)
+  - RSI Mean Reversion
+  - Bollinger Bands Mean Reversion
+- Strategy context with OHLCV data and position info
+- Comprehensive testing (7 new test modules)
+- 253+ total tests passing
+
+### Phase 5: Trading Engine 🚧 NEXT
+- Order execution and lifecycle management
+- Position tracking and management
+- Execution modes: live, paper, backtest, suggest
+- State persistence and crash recovery
+- Order reconciliation with exchange
 
 ### Future Phases
-- Trading engine with order management
 - Risk management module
 - Backtesting engine
 - Discord notifications
