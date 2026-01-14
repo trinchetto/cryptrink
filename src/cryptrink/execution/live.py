@@ -10,6 +10,15 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from cryptrink.core.logging import get_logger
+from cryptrink.exchange.base import (
+    OrderSide as ExchangeOrderSide,
+)
+from cryptrink.exchange.base import (
+    OrderStatus as ExchangeOrderStatus,
+)
+from cryptrink.exchange.base import (
+    OrderType as ExchangeOrderType,
+)
 from cryptrink.execution.base import (
     BaseExecutor,
     ExecutionContext,
@@ -103,9 +112,61 @@ class LiveExecutor(BaseExecutor):
 
         # Submit order to exchange
         try:
-            # TODO: Implement place_order in RevolutX client (Step 6).
-            raise NotImplementedError(
-                "Live order placement not yet implemented. This will be added in Phase 5 Step 6."
+            logger.info(
+                "placing_live_order",
+                symbol=signal.symbol,
+                side=order_side.value,
+                type=order_type.value,
+                quantity=float(quantity),
+                signal_type=signal.signal_type.value,
+            )
+
+            # Place order on exchange
+            exchange_order = await self._client.create_order(
+                symbol=signal.symbol,
+                side=self._to_exchange_order_side(order_side),
+                order_type=self._to_exchange_order_type(order_type),
+                quantity=quantity,
+                price=None,  # Market order has no price
+            )
+
+            execution_status = self._to_execution_order_status(exchange_order.status)
+
+            # Track order locally
+            self._order_tracking[exchange_order.id] = {
+                "order_id": exchange_order.id,
+                "symbol": signal.symbol,
+                "side": order_side,
+                "quantity": quantity,
+                "status": execution_status,
+                "signal_type": signal.signal_type,
+                "created_at": exchange_order.created_at,
+            }
+
+            logger.info(
+                "live_order_placed",
+                order_id=exchange_order.id,
+                symbol=signal.symbol,
+                side=order_side.value,
+                quantity=float(quantity),
+                status=execution_status.value,
+            )
+
+            return ExecutionResult(
+                success=True,
+                order_id=exchange_order.id,
+                order_type=order_type,
+                order_side=order_side,
+                quantity=quantity,
+                price=signal.price,
+                status=execution_status,
+                message=f"Live order placed successfully: {exchange_order.id}",
+                metadata={
+                    "signal_type": signal.signal_type.value,
+                    "exchange_order_id": exchange_order.id,
+                    "filled_quantity": float(exchange_order.filled_quantity),
+                    "created_at": exchange_order.created_at.isoformat(),
+                },
             )
 
         except Exception as e:
@@ -138,10 +199,23 @@ class LiveExecutor(BaseExecutor):
             True if cancellation was successful, False otherwise.
         """
         try:
-            # TODO: Implement cancel_order in RevolutX client (Step 6).
-            raise NotImplementedError(
-                "Live order cancellation not yet implemented. This will be added in Phase 5 Step 6."
+            logger.info("cancelling_live_order", order_id=order_id)
+
+            # Cancel order on exchange
+            cancelled_order = await self._client.cancel_order(order_id)
+            execution_status = self._to_execution_order_status(cancelled_order.status)
+
+            # Update local tracking
+            if order_id in self._order_tracking:
+                self._order_tracking[order_id]["status"] = execution_status
+
+            logger.info(
+                "live_order_cancelled",
+                order_id=order_id,
+                status=execution_status.value,
             )
+
+            return True
 
         except Exception as e:
             logger.error(
@@ -164,12 +238,15 @@ class LiveExecutor(BaseExecutor):
             KeyError: If order ID is not found.
         """
         try:
-            # Check local tracking first
-            if order_id in self._order_tracking:
-                # TODO: Sync with exchange to get latest status.
-                return self._order_tracking[order_id]["status"]  # type: ignore[return-value]
+            # Fetch latest status from exchange
+            order = await self._client.get_order(order_id)
+            execution_status = self._to_execution_order_status(order.status)
 
-            raise KeyError(f"Order {order_id} not found in tracking")
+            # Update local tracking
+            if order_id in self._order_tracking:
+                self._order_tracking[order_id]["status"] = execution_status
+
+            return execution_status
 
         except Exception as e:
             logger.error(
@@ -177,7 +254,7 @@ class LiveExecutor(BaseExecutor):
                 order_id=order_id,
                 error=str(e),
             )
-            raise
+            raise KeyError(f"Order {order_id} not found or inaccessible: {e}") from e
 
     async def sync_state(self) -> None:
         """Synchronize executor state with the exchange.
@@ -186,14 +263,38 @@ class LiveExecutor(BaseExecutor):
         to ensure our internal state matches reality.
         """
         try:
-            # TODO: Implement state sync with exchange
-            # - Fetch open orders
-            # - Update order statuses
-            # - Reconcile positions
+            # Fetch all open orders from exchange
+            open_orders = await self._client.get_open_orders()
+
+            # Update tracking for any tracked orders
+            synced_count = 0
+            for order_id, tracked_data in list(self._order_tracking.items()):
+                # Find matching order in open orders
+                matching_order = next((o for o in open_orders if o.id == order_id), None)
+
+                if matching_order:
+                    # Update status from exchange
+                    tracked_data["status"] = self._to_execution_order_status(matching_order.status)
+                    synced_count += 1
+                else:
+                    # Order not in open orders - likely filled or cancelled
+                    # Try to get order details
+                    try:
+                        order = await self._client.get_order(order_id)
+                        tracked_data["status"] = self._to_execution_order_status(order.status)
+                        synced_count += 1
+                    except Exception:
+                        # Order not accessible - remove from tracking
+                        logger.warning(
+                            "order_not_found_during_sync",
+                            order_id=order_id,
+                        )
 
             logger.debug(
-                "live_state_sync",
+                "live_state_sync_completed",
                 tracked_orders=len(self._order_tracking),
+                synced_orders=synced_count,
+                open_orders_count=len(open_orders),
             )
 
         except Exception as e:
@@ -280,3 +381,24 @@ class LiveExecutor(BaseExecutor):
                 }
 
         return {"valid": True, "reason": ""}
+
+    def _to_exchange_order_side(self, order_side: OrderSide) -> ExchangeOrderSide:
+        """Convert execution order side to exchange order side."""
+        return ExchangeOrderSide(order_side.value)
+
+    def _to_exchange_order_type(self, order_type: OrderType) -> ExchangeOrderType:
+        """Convert execution order type to exchange order type."""
+        return ExchangeOrderType(order_type.value)
+
+    def _to_execution_order_status(self, status: ExchangeOrderStatus) -> OrderStatus:
+        """Convert exchange order status to execution order status."""
+        mapping = {
+            ExchangeOrderStatus.PENDING: OrderStatus.PENDING,
+            ExchangeOrderStatus.OPEN: OrderStatus.SUBMITTED,
+            ExchangeOrderStatus.PARTIALLY_FILLED: OrderStatus.PARTIALLY_FILLED,
+            ExchangeOrderStatus.FILLED: OrderStatus.FILLED,
+            ExchangeOrderStatus.CANCELLED: OrderStatus.CANCELLED,
+            ExchangeOrderStatus.REJECTED: OrderStatus.REJECTED,
+            ExchangeOrderStatus.EXPIRED: OrderStatus.EXPIRED,
+        }
+        return mapping.get(status, OrderStatus.SUBMITTED)
