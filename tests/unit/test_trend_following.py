@@ -26,10 +26,10 @@ class TestSmaCrossoverStrategy:
 
     def test_init_invalid_fast_slow_period(self) -> None:
         """Test that fast_period must be less than slow_period."""
-        with pytest.raises(ValueError, match="fast_period .* must be < slow_period"):
+        with pytest.raises(ValueError, match=r"fast_period .* must be < slow_period"):
             SmaCrossoverStrategy(fast_period=30, slow_period=10)
 
-        with pytest.raises(ValueError, match="fast_period .* must be < slow_period"):
+        with pytest.raises(ValueError, match=r"fast_period .* must be < slow_period"):
             SmaCrossoverStrategy(fast_period=20, slow_period=20)
 
     def test_init_invalid_fast_period(self) -> None:

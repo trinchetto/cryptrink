@@ -53,20 +53,20 @@ class TestRsiMeanReversionStrategy:
 
     def test_init_invalid_threshold_order(self) -> None:
         """Test that oversold_threshold must be less than overbought_threshold."""
-        with pytest.raises(ValueError, match="oversold_threshold .* must be <"):
+        with pytest.raises(ValueError, match=r"oversold_threshold .* must be <"):
             RsiMeanReversionStrategy(oversold_threshold=70.0, overbought_threshold=30.0)
 
-        with pytest.raises(ValueError, match="oversold_threshold .* must be <"):
+        with pytest.raises(ValueError, match=r"oversold_threshold .* must be <"):
             RsiMeanReversionStrategy(oversold_threshold=50.0, overbought_threshold=50.0)
 
     def test_init_invalid_extreme_oversold(self) -> None:
         """Test that extreme_oversold must be less than oversold_threshold."""
-        with pytest.raises(ValueError, match="extreme_oversold .* must be <"):
+        with pytest.raises(ValueError, match=r"extreme_oversold .* must be <"):
             RsiMeanReversionStrategy(extreme_oversold=35.0, oversold_threshold=30.0)
 
     def test_init_invalid_extreme_overbought(self) -> None:
         """Test that extreme_overbought must be greater than overbought_threshold."""
-        with pytest.raises(ValueError, match="extreme_overbought .* must be >"):
+        with pytest.raises(ValueError, match=r"extreme_overbought .* must be >"):
             RsiMeanReversionStrategy(extreme_overbought=65.0, overbought_threshold=70.0)
 
     def test_oversold_generates_entry_long(self) -> None:
