@@ -107,7 +107,7 @@ class PaperExecutor(BaseExecutor):
 
         # Get position size from internal tracking for paper mode
         position = self._positions.get(context.symbol)
-        position_size = cast(Decimal, position["quantity"]) if position else None
+        position_size = cast("Decimal", position["quantity"]) if position else None
         quantity = calculate_quantity(context, order_side, position_size)
 
         # Validate order (paper mode uses self._balance instead of context balance)
