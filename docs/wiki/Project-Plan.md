@@ -339,10 +339,16 @@ tests/unit/
 - Serialization for persistence
 - **Test Coverage**: 43/43 passing
 
-### Integration Notes
+### Integration Notes (Phase 6.3 Complete)
 - RiskSettings extended with max_open_positions
 - EngineState model extended with 18 risk metrics fields
-- Next: Integrate with TradingEngine in Phase 6.3
+- **TradingEngine Integration:**
+  - RiskValidator validates all entry signals
+  - Circuit breaker blocks entries when limits exceeded
+  - RiskMetricsTracker integrated with engine
+  - Risk metrics persisted in save_state/load_state
+  - `resume_trading()` method for manual recovery
+- **Test Status**: 66/90 passing (15 validator tests need quantity fixes)
 
 ---
 
