@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, Protocol, TypedDict
 
 if TYPE_CHECKING:
     from cryptrink.strategies.base import Signal, SignalType
@@ -56,6 +56,18 @@ class OrderStatus(str, Enum):
     CANCELLED = "cancelled"  # Cancelled by user or system
     REJECTED = "rejected"  # Rejected by exchange
     EXPIRED = "expired"  # Expired (for limit orders with TTL)
+
+
+class PositionSizerProtocol(Protocol):
+    """Protocol for position sizing implementations."""
+
+    def calculate_position_size(
+        self,
+        context: ExecutionContext,
+        signal: Signal,
+        order_side: OrderSide,
+    ) -> Decimal:
+        """Return the desired position size."""
 
 
 @dataclass
@@ -220,15 +232,19 @@ def calculate_quantity(
     context: ExecutionContext,
     order_side: OrderSide,
     position_size: Decimal | None = None,
+    signal: Signal | None = None,
+    position_sizer: PositionSizerProtocol | None = None,
 ) -> Decimal:
     """Calculate order quantity for execution.
 
-    Simplified calculation - Phase 6 will implement proper position sizing.
+    Uses PositionSizer if provided, otherwise falls back to simple allocation.
 
     Args:
         context: Execution context with balance and price info.
         order_side: Order side (BUY or SELL).
         position_size: Current position size (for SELL orders), optional.
+        signal: Trading signal (required for position sizing algorithms).
+        position_sizer: PositionSizer instance (uses risk-based sizing if provided).
 
     Returns:
         Order quantity.
@@ -241,7 +257,11 @@ def calculate_quantity(
             return context.position_size
         return Decimal("0")
 
-    # For buys, use 10% of available balance
+    # For buys, use PositionSizer if available
+    if position_sizer is not None and signal is not None:
+        return position_sizer.calculate_position_size(context, signal, order_side)
+
+    # Fallback: simple 10% allocation (Phase 5 behavior)
     allocation = Decimal("0.1")
     notional_value = context.available_balance * allocation
     quantity = notional_value / context.current_price

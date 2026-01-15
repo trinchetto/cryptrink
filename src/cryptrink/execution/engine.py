@@ -9,12 +9,20 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from cryptrink.core.config import RiskSettings
 from cryptrink.core.logging import get_logger
-from cryptrink.execution.base import BaseExecutor, ExecutionContext, ExecutionMode, ExecutionResult
+from cryptrink.execution.base import (
+    BaseExecutor,
+    ExecutionContext,
+    ExecutionMode,
+    ExecutionResult,
+)
 from cryptrink.execution.models import EngineState
 from cryptrink.execution.order_manager import OrderManager
 from cryptrink.execution.position_tracker import PositionTracker
 from cryptrink.execution.repository import EngineStateRepository, OrderRepository
+from cryptrink.risk.metrics import RiskMetricsTracker
+from cryptrink.risk.validator import RiskValidator
 from cryptrink.strategies.base import BaseStrategy, Signal, SignalStrength, SignalType
 
 logger = get_logger(__name__)
@@ -36,6 +44,7 @@ class TradingEngine:
         initial_balance: Decimal = Decimal("10000"),
         max_position_size: Decimal = Decimal("0.1"),  # 10% of balance per position
         max_open_positions: int = 5,
+        risk_settings: RiskSettings | None = None,
     ) -> None:
         """Initialize the trading engine.
 
@@ -47,6 +56,7 @@ class TradingEngine:
             initial_balance: Initial account balance.
             max_position_size: Maximum position size as fraction of balance (default 10%).
             max_open_positions: Maximum number of concurrent open positions.
+            risk_settings: Optional risk management settings (uses defaults if not provided).
         """
         self._strategy = strategy
         self._executor = executor
@@ -67,10 +77,16 @@ class TradingEngine:
         self._order_repo = OrderRepository(session_factory)
         self._state_repo = EngineStateRepository(session_factory)
 
+        # Initialize risk management components
+        self._risk_settings = risk_settings or RiskSettings()
+        self._risk_validator = RiskValidator(self._risk_settings)
+        self._risk_metrics = RiskMetricsTracker(initial_balance)
+
         # Engine state
         self._is_running = False
         self._signal_count = 0
         self._execution_count = 0
+        self._circuit_breaker_active = False
 
         logger.info(
             "trading_engine_initialized",
@@ -80,6 +96,7 @@ class TradingEngine:
             initial_balance=float(initial_balance),
             max_position_size=float(max_position_size),
             max_open_positions=max_open_positions,
+            risk_management_enabled=True,
         )
 
     async def process_signal(
@@ -156,7 +173,7 @@ class TradingEngine:
         )
 
         # Validate signal against risk management rules
-        if not self._validate_signal(signal, context):
+        if not await self._validate_signal(signal, context):
             logger.info(
                 "signal_rejected_by_risk_management",
                 symbol=symbol,
@@ -185,7 +202,7 @@ class TradingEngine:
 
         return result
 
-    def _validate_signal(self, signal: Signal, context: ExecutionContext) -> bool:
+    async def _validate_signal(self, signal: Signal, context: ExecutionContext) -> bool:
         """Validate signal against risk management rules.
 
         Args:
@@ -199,25 +216,71 @@ class TradingEngine:
         if signal.signal_type == SignalType.HOLD:
             return True
 
-        # For entry signals, check position limits
-        if signal.signal_type in [SignalType.ENTRY_LONG, SignalType.ENTRY_SHORT]:
-            # Check max open positions
-            # Note: This is a simplified check - in production you'd query the position tracker
-            if context.has_position:
-                logger.debug("entry_signal_rejected_already_has_position", symbol=signal.symbol)
-                return False
+        # Check circuit breaker first
+        if self._circuit_breaker_active and signal.signal_type in [
+            SignalType.ENTRY_LONG,
+            SignalType.ENTRY_SHORT,
+        ]:
+            logger.warning(
+                "signal_rejected_circuit_breaker_active",
+                symbol=signal.symbol,
+                circuit_breaker_reason=self._risk_metrics.metrics.circuit_breaker_reason,
+            )
+            return False
 
-            # Check if we have enough balance
-            if context.account_balance <= 0:
-                logger.debug("entry_signal_rejected_insufficient_balance", symbol=signal.symbol)
-                return False
-
-        # For exit signals, verify we have a position
+        # For exit signals, verify we have a position (but always allow exits)
         if (signal.signal_type in [SignalType.EXIT_LONG, SignalType.EXIT_SHORT]) and (
             not context.has_position
         ):
             logger.debug("exit_signal_rejected_no_position", symbol=signal.symbol)
             return False
+
+        # For entry signals, use RiskValidator
+        if signal.signal_type in [SignalType.ENTRY_LONG, SignalType.ENTRY_SHORT]:
+            # Determine order side
+            from cryptrink.execution.base import calculate_quantity, determine_order_side
+
+            order_side = determine_order_side(signal.signal_type)
+
+            # Calculate quantity for this order
+            quantity = calculate_quantity(
+                context=context,
+                order_side=order_side,
+                signal=signal,
+                position_sizer=None,  # Using simple allocation for now
+            )
+
+            # Get open positions count
+            all_open_positions = await self._position_tracker.get_open_positions()
+            open_positions_count = len(all_open_positions)
+
+            # Validate with RiskValidator
+            validation_result = self._risk_validator.validate_order(
+                signal=signal,
+                quantity=quantity,
+                context=context,
+                order_side=order_side,
+                metrics=self._risk_metrics.metrics,
+                open_positions_count=open_positions_count,
+            )
+
+            if not validation_result.valid:
+                logger.warning(
+                    "signal_rejected_by_risk_validator",
+                    symbol=signal.symbol,
+                    reason=validation_result.reason,
+                    circuit_breaker=validation_result.circuit_breaker_triggered,
+                )
+
+                # Activate circuit breaker if triggered
+                if validation_result.circuit_breaker_triggered:
+                    self._circuit_breaker_active = True
+                    if validation_result.circuit_breaker_reason:
+                        self._risk_metrics.activate_circuit_breaker(
+                            validation_result.circuit_breaker_reason
+                        )
+
+                return False
 
         return True
 
@@ -294,6 +357,27 @@ class TradingEngine:
         await self.save_state()
         logger.info("trading_engine_stopped")
 
+    async def resume_trading(self) -> None:
+        """Manually resume trading after circuit breaker activation.
+
+        This should only be called after reviewing the reason for circuit breaker
+        activation and confirming it's safe to resume trading.
+        """
+        if not self._circuit_breaker_active:
+            logger.warning("circuit_breaker_not_active_no_action_needed")
+            return
+
+        previous_reason = self._risk_metrics.metrics.circuit_breaker_reason
+
+        self._circuit_breaker_active = False
+        self._risk_metrics.deactivate_circuit_breaker()
+
+        await self.save_state()
+        logger.warning(
+            "trading_resumed_circuit_breaker_cleared",
+            previous_reason=previous_reason,
+        )
+
     async def reset(self, initial_balance: Decimal | None = None) -> None:
         """Reset the trading engine state.
 
@@ -318,9 +402,17 @@ class TradingEngine:
         """Save the current engine state to the database.
 
         Persists all engine state including running status, balances, counters,
-        and configuration for recovery purposes.
+        risk metrics, and configuration for recovery purposes.
         """
         now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        metrics = self._risk_metrics.metrics
+
+        # Convert circuit breaker timestamp if present
+        circuit_breaker_triggered_at = None
+        if metrics.circuit_breaker_triggered_at:
+            circuit_breaker_triggered_at = int(
+                metrics.circuit_breaker_triggered_at.timestamp() * 1000
+            )
 
         engine_state = EngineState(
             engine_id=self._engine_id,
@@ -333,6 +425,28 @@ class TradingEngine:
             max_open_positions=self._max_open_positions,
             signal_count=self._signal_count,
             execution_count=self._execution_count,
+            # Risk Metrics - P&L Tracking
+            daily_realized_pnl=str(metrics.daily_realized_pnl),
+            daily_unrealized_pnl=str(metrics.daily_unrealized_pnl),
+            total_realized_pnl=str(metrics.total_realized_pnl),
+            # Risk Metrics - Drawdown Tracking
+            peak_equity=str(metrics.peak_equity),
+            current_drawdown=str(metrics.current_drawdown),
+            max_drawdown=str(metrics.max_drawdown),
+            # Risk Metrics - Win Rate Tracking
+            win_count=metrics.win_count,
+            loss_count=metrics.loss_count,
+            total_trades=metrics.total_trades,
+            total_win_amount=str(metrics.total_win_amount),
+            total_loss_amount=str(metrics.total_loss_amount),
+            # Risk Metrics - Circuit Breaker State
+            circuit_breaker_active=metrics.circuit_breaker_active,
+            circuit_breaker_reason=metrics.circuit_breaker_reason,
+            circuit_breaker_triggered_at=circuit_breaker_triggered_at,
+            # Risk Metrics - Timestamp Tracking
+            risk_metrics_last_reset_at=int(metrics.last_reset_at.timestamp() * 1000),
+            risk_metrics_last_updated_at=int(metrics.last_updated_at.timestamp() * 1000),
+            # Standard timestamps
             created_at=now_ms,
             updated_at=now_ms,
             last_signal_at=None,
@@ -384,11 +498,38 @@ class TradingEngine:
         engine._signal_count = engine_state.signal_count
         engine._execution_count = engine_state.execution_count
 
+        # Restore risk metrics
+        from cryptrink.risk.metrics import RiskMetrics
+
+        restored_metrics = RiskMetrics(
+            daily_realized_pnl=engine_state.daily_realized_pnl_decimal,
+            daily_unrealized_pnl=engine_state.daily_unrealized_pnl_decimal,
+            total_realized_pnl=engine_state.total_realized_pnl_decimal,
+            peak_equity=engine_state.peak_equity_decimal,
+            current_drawdown=engine_state.current_drawdown_decimal,
+            max_drawdown=engine_state.max_drawdown_decimal,
+            win_count=engine_state.win_count,
+            loss_count=engine_state.loss_count,
+            total_trades=engine_state.total_trades,
+            total_win_amount=engine_state.total_win_amount_decimal,
+            total_loss_amount=engine_state.total_loss_amount_decimal,
+            circuit_breaker_active=engine_state.circuit_breaker_active,
+            circuit_breaker_reason=engine_state.circuit_breaker_reason,
+            circuit_breaker_triggered_at=engine_state.circuit_breaker_triggered_datetime,
+            last_reset_at=engine_state.risk_metrics_last_reset_datetime,
+            last_updated_at=engine_state.risk_metrics_last_updated_datetime,
+        )
+
+        # Replace the tracker's metrics with restored state
+        engine._risk_metrics._metrics = restored_metrics
+        engine._circuit_breaker_active = restored_metrics.circuit_breaker_active
+
         logger.info(
             "engine_state_loaded",
             engine_id=engine_id,
             is_running=engine_state.is_running,
             signal_count=engine_state.signal_count,
+            circuit_breaker_active=restored_metrics.circuit_breaker_active,
         )
 
         return engine

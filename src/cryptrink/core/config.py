@@ -99,16 +99,58 @@ class RevolutXSettings(BaseSettings):
         raise ValueError(msg)
 
 
+class SizingStrategy(str, Enum):
+    """Position sizing strategy.
+
+    - FIXED_FRACTIONAL: Risk a fixed percentage per trade based on stop-loss distance
+    - VOLATILITY_BASED: Scale position size inversely with market volatility (ATR)
+    - KELLY_CRITERION: Optimal sizing based on win rate and risk/reward ratio
+    """
+
+    FIXED_FRACTIONAL = "fixed_fractional"
+    VOLATILITY_BASED = "volatility_based"
+    KELLY_CRITERION = "kelly_criterion"
+
+
 class RiskSettings(BaseSettings):
     """Risk management configuration."""
 
     model_config = SettingsConfigDict(env_prefix="RISK_")
 
+    # Position Sizing (Phase 6.1)
+    sizing_strategy: SizingStrategy = Field(
+        default=SizingStrategy.FIXED_FRACTIONAL,
+        description="Position sizing strategy to use",
+    )
+    risk_per_trade: float = Field(
+        default=0.02,
+        ge=0.0,
+        le=1.0,
+        description="Percentage of account to risk per trade (0-1)",
+    )
+    kelly_fraction: float = Field(
+        default=0.25,
+        ge=0.0,
+        le=1.0,
+        description="Fraction of Kelly criterion to use (0.25 = quarter-Kelly)",
+    )
+    volatility_multiplier: float = Field(
+        default=2.0,
+        gt=0.0,
+        description="Multiplier for ATR in volatility-based sizing",
+    )
+
+    # Position Limits
     max_position_size_pct: float = Field(
         default=0.1,
         ge=0.0,
         le=1.0,
         description="Maximum position size as percentage of portfolio",
+    )
+    max_open_positions: int = Field(
+        default=5,
+        ge=1,
+        description="Maximum number of open positions",
     )
     max_daily_loss_pct: float = Field(
         default=0.05,
@@ -122,6 +164,8 @@ class RiskSettings(BaseSettings):
         le=1.0,
         description="Maximum drawdown before stopping",
     )
+
+    # Stop-Loss / Take-Profit Defaults
     default_stop_loss_pct: float = Field(
         default=0.02,
         ge=0.0,
