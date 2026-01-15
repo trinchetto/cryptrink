@@ -323,6 +323,32 @@ class EngineState(Base):
     signal_count: Mapped[int] = mapped_column(nullable=False, default=0)
     execution_count: Mapped[int] = mapped_column(nullable=False, default=0)
 
+    # Risk Metrics - P&L Tracking
+    daily_realized_pnl: Mapped[str] = mapped_column(String(50), nullable=False, default="0")
+    daily_unrealized_pnl: Mapped[str] = mapped_column(String(50), nullable=False, default="0")
+    total_realized_pnl: Mapped[str] = mapped_column(String(50), nullable=False, default="0")
+
+    # Risk Metrics - Drawdown Tracking
+    peak_equity: Mapped[str] = mapped_column(String(50), nullable=False, default="0")
+    current_drawdown: Mapped[str] = mapped_column(String(50), nullable=False, default="0")
+    max_drawdown: Mapped[str] = mapped_column(String(50), nullable=False, default="0")
+
+    # Risk Metrics - Win Rate Tracking
+    win_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    loss_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    total_trades: Mapped[int] = mapped_column(nullable=False, default=0)
+    total_win_amount: Mapped[str] = mapped_column(String(50), nullable=False, default="0")
+    total_loss_amount: Mapped[str] = mapped_column(String(50), nullable=False, default="0")
+
+    # Risk Metrics - Circuit Breaker State
+    circuit_breaker_active: Mapped[bool] = mapped_column(nullable=False, default=False)
+    circuit_breaker_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    circuit_breaker_triggered_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+    # Risk Metrics - Timestamp Tracking
+    risk_metrics_last_reset_at: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    risk_metrics_last_updated_at: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+
     # Timestamps (Unix timestamp in milliseconds)
     created_at: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     updated_at: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
@@ -371,3 +397,63 @@ class EngineState(Base):
             if self.last_signal_at
             else None
         )
+
+    # Risk Metrics Properties
+    @property
+    def daily_realized_pnl_decimal(self) -> Decimal:
+        """Get daily realized P&L as Decimal."""
+        return Decimal(self.daily_realized_pnl)
+
+    @property
+    def daily_unrealized_pnl_decimal(self) -> Decimal:
+        """Get daily unrealized P&L as Decimal."""
+        return Decimal(self.daily_unrealized_pnl)
+
+    @property
+    def total_realized_pnl_decimal(self) -> Decimal:
+        """Get total realized P&L as Decimal."""
+        return Decimal(self.total_realized_pnl)
+
+    @property
+    def peak_equity_decimal(self) -> Decimal:
+        """Get peak equity as Decimal."""
+        return Decimal(self.peak_equity)
+
+    @property
+    def current_drawdown_decimal(self) -> Decimal:
+        """Get current drawdown as Decimal."""
+        return Decimal(self.current_drawdown)
+
+    @property
+    def max_drawdown_decimal(self) -> Decimal:
+        """Get max drawdown as Decimal."""
+        return Decimal(self.max_drawdown)
+
+    @property
+    def total_win_amount_decimal(self) -> Decimal:
+        """Get total win amount as Decimal."""
+        return Decimal(self.total_win_amount)
+
+    @property
+    def total_loss_amount_decimal(self) -> Decimal:
+        """Get total loss amount as Decimal."""
+        return Decimal(self.total_loss_amount)
+
+    @property
+    def circuit_breaker_triggered_datetime(self) -> datetime | None:
+        """Get circuit breaker triggered time as datetime object."""
+        return (
+            datetime.fromtimestamp(self.circuit_breaker_triggered_at / 1000.0, tz=UTC)
+            if self.circuit_breaker_triggered_at
+            else None
+        )
+
+    @property
+    def risk_metrics_last_reset_datetime(self) -> datetime:
+        """Get risk metrics last reset time as datetime object."""
+        return datetime.fromtimestamp(self.risk_metrics_last_reset_at / 1000.0, tz=UTC)
+
+    @property
+    def risk_metrics_last_updated_datetime(self) -> datetime:
+        """Get risk metrics last updated time as datetime object."""
+        return datetime.fromtimestamp(self.risk_metrics_last_updated_at / 1000.0, tz=UTC)

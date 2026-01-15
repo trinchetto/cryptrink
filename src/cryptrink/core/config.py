@@ -147,6 +147,11 @@ class RiskSettings(BaseSettings):
         le=1.0,
         description="Maximum position size as percentage of portfolio",
     )
+    max_open_positions: int = Field(
+        default=5,
+        ge=1,
+        description="Maximum number of open positions",
+    )
     max_daily_loss_pct: float = Field(
         default=0.05,
         ge=0.0,
