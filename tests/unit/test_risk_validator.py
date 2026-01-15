@@ -148,7 +148,7 @@ class TestOpenPositionsValidation:
 
     def test_below_max_open_positions(self, validator, buy_signal, execution_context, risk_metrics):
         """Test when below max open positions."""
-        quantity = Decimal("0.1")
+        quantity = Decimal("0.01")
 
         result = validator.validate_order(
             buy_signal,
@@ -163,7 +163,7 @@ class TestOpenPositionsValidation:
 
     def test_at_max_open_positions(self, validator, buy_signal, execution_context, risk_metrics):
         """Test rejection when at max open positions."""
-        quantity = Decimal("0.1")
+        quantity = Decimal("0.01")
 
         result = validator.validate_order(
             buy_signal,
@@ -183,7 +183,7 @@ class TestOpenPositionsValidation:
         self, validator, buy_signal, execution_context, risk_metrics
     ):
         """Test rejection when exceeding max open positions."""
-        quantity = Decimal("0.1")
+        quantity = Decimal("0.01")
 
         result = validator.validate_order(
             buy_signal,
@@ -203,7 +203,7 @@ class TestDailyLossValidation:
 
     def test_no_daily_loss(self, validator, buy_signal, execution_context, risk_metrics):
         """Test when no daily loss."""
-        quantity = Decimal("0.1")
+        quantity = Decimal("0.01")
 
         result = validator.validate_order(
             buy_signal,
@@ -220,7 +220,7 @@ class TestDailyLossValidation:
         """Test with small daily loss under limit."""
         # Daily loss = -$300 (3% of balance) < 5% max
         risk_metrics.daily_realized_pnl = Decimal("-300")
-        quantity = Decimal("0.1")
+        quantity = Decimal("0.01")
 
         result = validator.validate_order(
             buy_signal,
@@ -237,7 +237,7 @@ class TestDailyLossValidation:
         """Test circuit breaker triggers when daily loss exceeds limit."""
         # Daily loss = -$600 (6% of balance) > 5% max
         risk_metrics.daily_realized_pnl = Decimal("-600")
-        quantity = Decimal("0.1")
+        quantity = Decimal("0.01")
 
         result = validator.validate_order(
             buy_signal,
@@ -257,7 +257,7 @@ class TestDailyLossValidation:
         """Test at exact daily loss limit."""
         # Daily loss = -$500 (5% of balance) = exactly at limit
         risk_metrics.daily_realized_pnl = Decimal("-500")
-        quantity = Decimal("0.1")
+        quantity = Decimal("0.01")
 
         result = validator.validate_order(
             buy_signal,
@@ -276,7 +276,7 @@ class TestDrawdownValidation:
 
     def test_no_drawdown(self, validator, buy_signal, execution_context, risk_metrics):
         """Test when no drawdown."""
-        quantity = Decimal("0.1")
+        quantity = Decimal("0.01")
 
         result = validator.validate_order(
             buy_signal,
@@ -293,7 +293,7 @@ class TestDrawdownValidation:
         """Test with small drawdown under limit."""
         # Drawdown = 10% < 15% max
         risk_metrics.current_drawdown = Decimal("0.1")
-        quantity = Decimal("0.1")
+        quantity = Decimal("0.01")
 
         result = validator.validate_order(
             buy_signal,
@@ -310,7 +310,7 @@ class TestDrawdownValidation:
         """Test circuit breaker triggers when drawdown exceeds limit."""
         # Drawdown = 20% > 15% max
         risk_metrics.current_drawdown = Decimal("0.2")
-        quantity = Decimal("0.1")
+        quantity = Decimal("0.01")
 
         result = validator.validate_order(
             buy_signal,
@@ -330,7 +330,7 @@ class TestDrawdownValidation:
         """Test at exact max drawdown limit."""
         # Drawdown = 15% = exactly at limit
         risk_metrics.current_drawdown = Decimal("0.15")
-        quantity = Decimal("0.1")
+        quantity = Decimal("0.01")
 
         result = validator.validate_order(
             buy_signal,
@@ -405,7 +405,7 @@ class TestCombinedValidation:
     ):
         """Test circuit breaker precedence when multiple limits exceeded."""
         # Small position size (passes size check)
-        quantity = Decimal("0.05")
+        quantity = Decimal("0.01")
 
         # Both circuit breakers triggered
         risk_metrics.daily_realized_pnl = Decimal("-600")  # Exceeded daily loss
@@ -426,7 +426,7 @@ class TestCombinedValidation:
 
     def test_all_validations_pass(self, validator, buy_signal, execution_context, risk_metrics):
         """Test that order passes when all validations pass."""
-        quantity = Decimal("0.05")  # 2.5% of balance
+        quantity = Decimal("0.01")  # 5% of balance
         risk_metrics.daily_realized_pnl = Decimal("-100")  # 1% loss
         risk_metrics.current_drawdown = Decimal("0.05")  # 5% drawdown
 
@@ -474,7 +474,7 @@ class TestCustomSettings:
 
         # Daily loss = 7% of balance
         risk_metrics.daily_realized_pnl = Decimal("-700")
-        quantity = Decimal("0.05")
+        quantity = Decimal("0.01")
 
         result = validator.validate_order(
             buy_signal,
@@ -492,7 +492,7 @@ class TestCustomSettings:
         single_position_settings = RiskSettings(max_open_positions=1)
         validator = RiskValidator(single_position_settings)
 
-        quantity = Decimal("0.05")
+        quantity = Decimal("0.01")
 
         result = validator.validate_order(
             buy_signal,
