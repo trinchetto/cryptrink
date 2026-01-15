@@ -20,11 +20,13 @@ from cryptrink.backtest.models import (
     PercentageSlippageModel,
     SlippageModel,
 )
+from cryptrink.backtest.result import BacktestResult
 
 __all__ = [
     "BacktestExecutor",
     "BacktestMetrics",
     "BacktestMetricsCalculator",
+    "BacktestResult",
     "ConstantSlippageModel",
     "FeeModel",
     "PercentageFeeModel",
