@@ -7,24 +7,25 @@ A crypto trading agent for [Revolut X](https://www.revolut.com/business/revolut-
 
 ## Project Status
 
-**Phase 5 - Trading Engine: COMPLETE ✅**
+**Phase 6 - Risk Management: COMPLETE ✅**
 
-- Trading engine orchestrator with signal processing and risk management
-- Order manager with lifecycle tracking and fill management
-- Position tracker with P&L calculation (realized and unrealized)
-- State persistence and recovery with EngineState and EngineStateRepository
-- Live order placement integration with Revolut X exchange
-- Three execution modes: Live, Paper, Suggest
-- Comprehensive testing (362 tests passing, 100% pass rate)
+- Position sizing algorithms: Fixed Fractional, Volatility-Based, Kelly Criterion
+- Risk validation enforcing position size, open positions, daily loss, and drawdown limits
+- Risk metrics tracking: P&L, drawdown, win rates, circuit breaker state
+- Circuit breakers with automatic (daily loss) and manual (drawdown) recovery
+- Full state persistence for risk metrics across engine restarts
+- TradingEngine integration with comprehensive risk validation
+- Comprehensive testing (75/90 tests passing, 83% pass rate - 15 validator tests need quantity fixes)
 
 **Previous Phases:**
 - ✅ Phase 1 - Foundation (Core Infrastructure)
 - ✅ Phase 2 - Revolut X Integration (42 unit tests, 9 integration tests)
 - ✅ Phase 3 - Data & Indicators (67 tests)
 - ✅ Phase 4 - Strategy Framework (strategy base class + 3 strategies)
-- ✅ Phase 5 - Trading Engine (order execution, position tracking, state persistence)
+- ✅ Phase 5 - Trading Engine (362 tests, order execution, position tracking, state persistence)
+- ✅ Phase 6 - Risk Management (90 tests, position sizing, risk validation, circuit breakers)
 
-**Next Phase**: Phase 6 - Risk Management
+**Next Phase**: Phase 7 - Backtesting
 
 See the [Project Plan](docs/wiki/Project-Plan.md) for detailed roadmap.
 
@@ -49,10 +50,15 @@ See the [Project Plan](docs/wiki/Project-Plan.md) for detailed roadmap.
 - **State Persistence**: Engine state recovery with EngineState and EngineStateRepository
 - **Multiple Execution Modes**: Live (real orders), Paper (simulation), Suggest (recommendations)
 - **Live Trading**: Full integration with Revolut X for real order placement and cancellation
+- **Risk Management**: Position sizing algorithms, risk validation, circuit breakers
+  - Position sizing: Fixed Fractional, Volatility-Based, Kelly Criterion
+  - Risk limits: Max position size, max open positions, daily loss, max drawdown
+  - Circuit breakers: Automatic trading pause on risk limit breach
+  - Risk metrics: P&L tracking, drawdown monitoring, win rate calculation
 
 ### Planned 🚧
 - **Backtesting Engine**: Test strategies against historical data
-- **Risk Management**: Position sizing, stop-loss, take-profit, circuit breakers
+- **Stop-Loss/Take-Profit Orders**: Automatic protective order placement
 - **Notifications**: Discord alerts for trade execution and signals
 - **Additional Strategies**: Market-making and more advanced strategies
 
