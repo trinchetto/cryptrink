@@ -11,6 +11,7 @@ This module provides a realistic backtesting environment with:
 
 from __future__ import annotations
 
+from cryptrink.backtest.executor import BacktestExecutor
 from cryptrink.backtest.models import (
     ConstantSlippageModel,
     FeeModel,
@@ -20,6 +21,7 @@ from cryptrink.backtest.models import (
 )
 
 __all__ = [
+    "BacktestExecutor",
     "ConstantSlippageModel",
     "FeeModel",
     "PercentageFeeModel",
