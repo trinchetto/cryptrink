@@ -209,6 +209,7 @@ __marimo__/
 
 #Claude
 .claude/
+tmpclaude-*
 
 # Cryptrink specific
 config.yaml
