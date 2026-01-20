@@ -11,6 +11,7 @@ This module provides a realistic backtesting environment with:
 
 from __future__ import annotations
 
+from cryptrink.backtest.engine import BacktestEngine
 from cryptrink.backtest.executor import BacktestExecutor
 from cryptrink.backtest.metrics import BacktestMetrics, BacktestMetricsCalculator
 from cryptrink.backtest.models import (
@@ -23,6 +24,7 @@ from cryptrink.backtest.models import (
 from cryptrink.backtest.result import BacktestResult
 
 __all__ = [
+    "BacktestEngine",
     "BacktestExecutor",
     "BacktestMetrics",
     "BacktestMetricsCalculator",
