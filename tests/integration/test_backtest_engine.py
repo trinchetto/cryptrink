@@ -13,12 +13,17 @@ Note: These tests use mock OHLCV data since the full data layer is not yet imple
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any
 
 import pytest
 
 from cryptrink.backtest.engine import BacktestEngine
-from cryptrink.strategies.base import BaseStrategy, Signal, SignalStrength, SignalType, StrategyContext
+from cryptrink.strategies.base import (
+    BaseStrategy,
+    Signal,
+    SignalStrength,
+    SignalType,
+    StrategyContext,
+)
 
 
 class MockOHLCV:
@@ -572,3 +577,125 @@ class TestBacktestResultOutput:
         assert "RETURNS" in output
         assert "RISK METRICS" in output
         assert "TRADE STATISTICS" in output
+
+
+class TestRealStrategyIntegration:
+    """Tests for integration with real implemented strategies.
+
+    Note: These tests verify that real strategies can be instantiated with
+    BacktestEngine. Since TradingEngine doesn't yet call strategy.generate_signal()
+    (see TODO in engine.py:201-209), the strategies won't execute trades.
+    These tests ensure the infrastructure is ready for when that integration is complete.
+    """
+
+    @pytest.fixture
+    def uptrend_data_feed(self):
+        """Create data feed with uptrend for testing strategies."""
+        start_time = datetime(2024, 1, 1, tzinfo=UTC)
+        candles = []
+
+        # Create strong uptrend to trigger strategy signals
+        for i in range(100):
+            timestamp = start_time + timedelta(hours=i)
+            base_price = Decimal("50000") + Decimal(str(i * 100))  # Strong uptrend
+
+            candles.append(
+                MockOHLCV(
+                    symbol="BTC-USD",
+                    timeframe="1h",
+                    timestamp=timestamp,
+                    open=base_price,
+                    high=base_price + Decimal("200"),
+                    low=base_price - Decimal("100"),
+                    close=base_price + Decimal("100"),
+                    volume=Decimal("100"),
+                )
+            )
+
+        return DummyDataFeed(candles)
+
+    @pytest.mark.asyncio
+    async def test_sma_crossover_strategy_integration(self, uptrend_data_feed):
+        """Test BacktestEngine with SmaCrossoverStrategy."""
+        from cryptrink.strategies.trend_following import SmaCrossoverStrategy
+
+        strategy = SmaCrossoverStrategy(fast_period=5, slow_period=20)
+
+        engine = BacktestEngine(
+            strategy=strategy,
+            data_feed=uptrend_data_feed,
+            initial_balance=Decimal("10000"),
+        )
+
+        result = await engine.run(
+            symbol="BTC-USD",
+            start_time=datetime(2024, 1, 1, tzinfo=UTC),
+            end_time=datetime(2024, 1, 3, tzinfo=UTC),
+            timeframe="1h",
+            lookback_periods=30,  # Need enough for slow SMA
+        )
+
+        # Verify backtest completes successfully
+        assert result.strategy_name == "SmaCrossoverStrategy"
+        assert result.symbol == "BTC-USD"
+        assert result.initial_balance == Decimal("10000")
+        assert len(result.equity_curve) > 0
+
+        # Note: No trades expected since TradingEngine doesn't call strategy yet
+        # This will change when TODO is implemented
+
+    @pytest.mark.asyncio
+    async def test_rsi_mean_reversion_strategy_integration(self, uptrend_data_feed):
+        """Test BacktestEngine with RsiMeanReversionStrategy."""
+        from cryptrink.strategies.mean_reversion import RsiMeanReversionStrategy
+
+        strategy = RsiMeanReversionStrategy(
+            rsi_period=14, oversold_threshold=30, overbought_threshold=70
+        )
+
+        engine = BacktestEngine(
+            strategy=strategy,
+            data_feed=uptrend_data_feed,
+            initial_balance=Decimal("10000"),
+        )
+
+        result = await engine.run(
+            symbol="BTC-USD",
+            start_time=datetime(2024, 1, 1, tzinfo=UTC),
+            end_time=datetime(2024, 1, 3, tzinfo=UTC),
+            timeframe="1h",
+            lookback_periods=40,  # Need enough for RSI calculation
+        )
+
+        # Verify backtest completes successfully
+        assert result.strategy_name == "RsiMeanReversionStrategy"
+        assert result.symbol == "BTC-USD"
+        assert result.initial_balance == Decimal("10000")
+        assert len(result.equity_curve) > 0
+
+    @pytest.mark.asyncio
+    async def test_bollinger_bands_strategy_integration(self, uptrend_data_feed):
+        """Test BacktestEngine with BollingerBandsStrategy."""
+        from cryptrink.strategies.mean_reversion import BollingerBandsStrategy
+
+        strategy = BollingerBandsStrategy(period=20, std_dev=2.0)
+
+        engine = BacktestEngine(
+            strategy=strategy,
+            data_feed=uptrend_data_feed,
+            initial_balance=Decimal("10000"),
+        )
+
+        result = await engine.run(
+            symbol="BTC-USD",
+            start_time=datetime(2024, 1, 1, tzinfo=UTC),
+            end_time=datetime(2024, 1, 3, tzinfo=UTC),
+            timeframe="1h",
+            lookback_periods=35,  # Need enough for Bollinger Bands
+        )
+
+        # Verify backtest completes successfully
+        assert result.strategy_name == "BollingerBandsStrategy"
+        assert result.symbol == "BTC-USD"
+        assert result.initial_balance == Decimal("10000")
+        assert len(result.equity_curve) > 0
