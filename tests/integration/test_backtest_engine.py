@@ -66,11 +66,7 @@ class DummyDataFeed:
         end_time: datetime,
     ) -> list[MockOHLCV]:
         """Return filtered OHLCV data."""
-        return [
-            candle
-            for candle in self._data
-            if start_time <= candle.timestamp <= end_time
-        ]
+        return [candle for candle in self._data if start_time <= candle.timestamp <= end_time]
 
 
 class AlwaysHoldStrategy(BaseStrategy):
