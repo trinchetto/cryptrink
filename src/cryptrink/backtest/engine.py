@@ -243,18 +243,19 @@ class BacktestEngine:
         return result
 
     async def _initialize_database(self) -> None:
-        """Initialize in-memory database schema."""
-        from cryptrink.data.models import OHLCV
+        """Initialize in-memory database schema.
+
+        Only creates execution tables (Order, Position) as backtest data
+        is provided via the data_feed parameter, not stored in database.
+        """
         from cryptrink.execution.models import Position
 
         # Create engine from session factory
         engine = self._session_factory.kw["bind"]
 
-        # Create all tables using model metadata
+        # Create execution tables only (Order, Position)
+        # Note: Position.metadata includes all execution models
         async with engine.begin() as conn:
-            # OHLCV.metadata contains all data models
-            await conn.run_sync(OHLCV.metadata.create_all)
-            # Position.metadata contains all execution models
             await conn.run_sync(Position.metadata.create_all)
 
         logger.debug("in_memory_database_initialized")
