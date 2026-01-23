@@ -370,64 +370,131 @@ tests/unit/
 
 ---
 
-## Phase 7: Backtesting
+## Phase 7: Backtesting - COMPLETED ✅
 
 ### Objectives
 Build a realistic backtesting engine with performance analysis.
 
 ### Deliverables
-- [ ] Backtesting engine:
-  - [ ] Event-driven simulation
-  - [ ] Historical data replay
-- [ ] Realistic execution simulation:
-  - [ ] Slippage modeling
-  - [ ] Fee calculation
-  - [ ] Partial fills
-- [ ] Performance metrics:
-  - [ ] Total return
-  - [ ] Sharpe ratio
-  - [ ] Sortino ratio
-  - [ ] Maximum drawdown
-  - [ ] Win rate
-  - [ ] Profit factor
-- [ ] Visualization and reporting
-- [ ] Strategy comparison
+- [x] Backtesting engine:
+  - [x] Event-driven simulation with BacktestEngine orchestrator
+  - [x] Historical data replay with candle-by-candle processing
+- [x] Realistic execution simulation:
+  - [x] Slippage modeling (ConstantSlippageModel)
+  - [x] Fee calculation (PercentageFeeModel)
+  - [x] Market impact simulation in BacktestExecutor
+- [x] Performance metrics:
+  - [x] Total return and annualized return
+  - [x] Sharpe ratio
+  - [x] Sortino ratio
+  - [x] Maximum drawdown and duration
+  - [x] Win rate and profit factor
+  - [x] Average win/loss and trade statistics
+- [x] Visualization and reporting:
+  - [x] Equity curve plotting with matplotlib
+  - [x] Drawdown overlay visualization
+  - [x] Console summary with Rich formatting
+  - [x] JSON export for programmatic analysis
+- [ ] Strategy comparison (deferred to future)
 
-### Files to Create
+### Files Created ✅
 ```
 src/cryptrink/backtest/
-├── engine.py          # Backtesting orchestrator
-├── simulation.py      # Market simulation
-├── metrics.py         # Performance metrics
-└── report.py          # Report generation
+├── __init__.py        # Module exports
+├── engine.py          # BacktestEngine orchestrator (294 lines)
+├── executor.py        # BacktestExecutor with slippage/fees (237 lines)
+├── metrics.py         # BacktestMetricsCalculator (298 lines)
+├── models.py          # Slippage and fee models (89 lines)
+└── result.py          # BacktestResult with plotting (256 lines)
+
+tests/unit/
+├── test_backtest_engine.py       # Engine tests
+├── test_backtest_executor.py     # Executor tests (25 tests)
+├── test_backtest_metrics.py      # Metrics tests (14 tests)
+└── test_backtest_result.py       # Result tests (9 tests)
 ```
+
+### Technical Highlights
+- **Event-Driven Replay**: Process historical candles one-by-one through TradingEngine
+- **Realistic Execution**: Slippage and fees reduce backtest inflation
+- **Comprehensive Metrics**: 20+ performance metrics calculated
+- **Equity Curve Tracking**: Full equity history with drawdown analysis
+- **Matplotlib Visualization**: Interactive plots with drawdown overlay
+- **BacktestResult Dataclass**: Clean API for accessing all results
 
 ---
 
-## Phase 8: CLI & User Experience
+## Phase 8: CLI & User Experience - COMPLETED ✅
 
 ### Objectives
 Complete the CLI interface and add notifications.
 
 ### Deliverables
-- [ ] CLI commands:
-  - [ ] `run` - Start trading agent
-  - [ ] `backtest` - Run backtests
-  - [ ] `suggest` - Get trade suggestions
-  - [ ] `status` - Show current status
-  - [ ] `history` - View trade history
-- [ ] Trade suggestion output (table/JSON)
-- [ ] Discord notifications:
-  - [ ] Trade execution alerts
-  - [ ] Daily summary
-  - [ ] Error notifications
-- [ ] Interactive mode (optional)
+- [x] CLI commands:
+  - [x] `run` - Start trading agent (placeholder, automated loop deferred)
+  - [x] `backtest` - Run backtests with BacktestEngine
+  - [x] `suggest` - Get trade suggestions from strategies
+  - [x] `status` - Show current engine status and positions
+  - [x] `history` - View trade and order history
+- [x] Trade suggestion output (table/JSON)
+  - [x] Rich tables for backtest results
+  - [x] Rich tables for trade suggestions
+  - [x] Rich tables for trade/order history
+  - [x] Rich panels for engine status
+- [x] Discord notifications:
+  - [x] Trade execution alerts
+  - [x] Position closed notifications
+  - [x] Daily summary
+  - [x] Error notifications
+  - [x] Circuit breaker alerts
+  - [x] Rate limiting (1-second minimum interval)
+- [ ] Interactive mode (deferred to future enhancement)
 
-### Files to Create
+### Files Created ✅
 ```
+src/cryptrink/cli/
+├── __init__.py        # CLI package exports
+├── formatters.py      # Rich table/panel formatters (183 lines)
+└── utils.py           # CLI utilities (async bridge, strategy loading) (124 lines)
+
 src/cryptrink/notifications/
-└── discord.py        # Discord webhook integration
+├── __init__.py        # Module exports (updated)
+└── discord.py         # Discord webhook notifier (248 lines)
+
+tests/unit/
+├── test_cli_formatters.py    # Formatter tests (9 tests)
+├── test_cli_utils.py         # Utility tests (21 tests)
+└── test_discord_notifier.py  # Discord tests (18 tests)
 ```
+
+### CLI Commands
+
+**backtest** - Run strategy backtests
+```bash
+cryptrink backtest sma_crossover BTC-EUR --start-date 2024-01-01 --end-date 2024-12-31 --plot --output results.json
+```
+
+**suggest** - Get trade suggestions
+```bash
+cryptrink suggest sma_crossover BTC-EUR --format table
+```
+
+**status** - Show engine status
+```bash
+cryptrink status --config config.toml
+```
+
+**history** - View trade history
+```bash
+cryptrink history --limit 50 --status closed --orders
+```
+
+### Technical Highlights
+- **Async/Sync Bridge**: `run_async()` bridges Typer CLI with async engines
+- **Rich Formatting**: Beautiful terminal output with tables and panels
+- **Discord Integration**: Webhook-based notifications with rate limiting
+- **JSON Export**: Machine-readable output for all commands
+- **48 Tests**: Comprehensive unit test coverage
 
 ---
 

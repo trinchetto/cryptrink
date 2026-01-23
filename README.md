@@ -7,15 +7,13 @@ A crypto trading agent for [Revolut X](https://www.revolut.com/business/revolut-
 
 ## Project Status
 
-**Phase 6 - Risk Management: COMPLETE ✅**
+**Phase 8 - CLI & User Experience: COMPLETE ✅**
 
-- Position sizing algorithms: Fixed Fractional, Volatility-Based, Kelly Criterion
-- Risk validation enforcing position size, open positions, daily loss, and drawdown limits
-- Risk metrics tracking: P&L, drawdown, win rates, circuit breaker state
-- Circuit breakers with automatic (daily loss) and manual (drawdown) recovery
-- Full state persistence for risk metrics across engine restarts
-- TradingEngine integration with comprehensive risk validation
-- Comprehensive testing (75/90 tests passing, 83% pass rate - 15 validator tests need quantity fixes)
+- CLI commands: `backtest`, `suggest`, `status`, `history`, `run` (placeholder)
+- Rich table formatting for backtest results, trade suggestions, and history
+- Discord webhook notifier with trade alerts, position closures, daily summaries
+- Rate limiting and error handling for Discord notifications
+- Comprehensive unit tests (48 passing, 3 skipped)
 
 **Previous Phases:**
 - ✅ Phase 1 - Foundation (Core Infrastructure)
@@ -24,8 +22,10 @@ A crypto trading agent for [Revolut X](https://www.revolut.com/business/revolut-
 - ✅ Phase 4 - Strategy Framework (strategy base class + 3 strategies)
 - ✅ Phase 5 - Trading Engine (362 tests, order execution, position tracking, state persistence)
 - ✅ Phase 6 - Risk Management (90 tests, position sizing, risk validation, circuit breakers)
+- ✅ Phase 7 - Backtesting (BacktestEngine, BacktestExecutor, metrics calculator, equity plotting)
+- ✅ Phase 8 - CLI & User Experience (CLI commands, formatters, Discord notifications)
 
-**Next Phase**: Phase 7 - Backtesting
+**Next Phase**: Phase 9 - Packaging & Deployment
 
 See the [Project Plan](docs/wiki/Project-Plan.md) for detailed roadmap.
 
@@ -56,10 +56,20 @@ See the [Project Plan](docs/wiki/Project-Plan.md) for detailed roadmap.
   - Circuit breakers: Automatic trading pause on risk limit breach
   - Risk metrics: P&L tracking, drawdown monitoring, win rate calculation
 
-### Planned 🚧
 - **Backtesting Engine**: Test strategies against historical data
+  - Event-driven backtest simulation with BacktestExecutor
+  - Slippage and fee modeling
+  - Comprehensive performance metrics (Sharpe, Sortino, Max Drawdown, Win Rate)
+  - Equity curve visualization with matplotlib
+  - JSON export for backtest results
+- **CLI & Notifications**: Full command-line interface with Discord alerts
+  - CLI commands: backtest, suggest, status, history, run
+  - Rich table formatting for results
+  - Discord webhook notifications for trades, positions, and errors
+
+### Planned 🚧
 - **Stop-Loss/Take-Profit Orders**: Automatic protective order placement
-- **Notifications**: Discord alerts for trade execution and signals
+- **Interactive Mode**: Approval-based trade execution workflow
 - **Additional Strategies**: Market-making and more advanced strategies
 
 ## Prerequisites
