@@ -19,7 +19,7 @@ T = TypeVar("T")
 console = Console()
 
 
-def run_async(coro: Coroutine[None, None, T]) -> T:
+def run_async[T](coro: Coroutine[None, None, T]) -> T:
     """Run async coroutine from sync context.
 
     Args:
