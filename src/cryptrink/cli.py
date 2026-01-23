@@ -60,24 +60,130 @@ def run(
         str | None,
         typer.Option("--symbol", help="Trading symbol (e.g., BTC-EUR)."),
     ] = None,
+    interactive: Annotated[
+        bool,
+        typer.Option("--interactive", "-i", help="Enable interactive mode."),
+    ] = False,
+    params: Annotated[
+        str | None,
+        typer.Option("--params", help="Strategy parameters as JSON."),
+    ] = None,
 ) -> None:
     """Run the trading agent."""
+    import asyncio
+    import json
+    from decimal import Decimal
+
+    from cryptrink.cli.utils import create_session_factory, load_strategy, run_async
+    from cryptrink.execution.engine import TradingEngine
+    from cryptrink.execution.paper import PaperExecutor
+    from cryptrink.notifications.discord import DiscordNotifier
+
     setup_logging()
     config = load_config(config_path)
+
+    # Override config with CLI args
+    if mode:
+        config.execution_mode = mode
+    if strategy:
+        config.default_strategy = strategy
+    if symbol:
+        config.symbols = [symbol]
 
     console.print(
         Panel(
             f"[bold green]Starting Cryptrink[/bold green]\n\n"
-            f"Mode: {mode.value}\n"
-            f"Strategy: {strategy or config.default_strategy}\n"
-            f"Symbol: {symbol or 'All configured symbols'}",
+            f"Mode: {config.execution_mode.value}\n"
+            f"Strategy: {config.default_strategy}\n"
+            f"Symbols: {', '.join(config.symbols)}\n"
+            f"Interactive: {'Yes' if interactive else 'No'}",
             title="Cryptrink Trading Agent",
             border_style="blue",
         )
     )
 
-    # TODO: Implement trading engine startup
-    console.print("[yellow]Trading engine not yet implemented.[/yellow]")
+    # Validate mode
+    if (
+        config.execution_mode == ExecutionMode.LIVE
+        and not config.revolutx.api_key.get_secret_value()
+    ):
+        console.print("[red]LIVE mode requires REVOLUTX_API_KEY[/red]")
+        raise typer.Exit(1)
+
+    # Parse parameters
+    strategy_params = {}
+    if params:
+        try:
+            strategy_params = json.loads(params)
+        except json.JSONDecodeError as e:
+            console.print(f"[red]Invalid JSON in --params: {e}[/red]")
+            raise typer.Exit(1) from e
+
+    async def start_trading():
+        # Load strategy
+        try:
+            strat = load_strategy(config.default_strategy, **strategy_params)
+        except ValueError as e:
+            console.print(f"[red]{e}[/red]")
+            raise typer.Exit(1) from e
+
+        # Create session factory
+        session_factory = create_session_factory(config)
+
+        # Create executor
+        if config.execution_mode == ExecutionMode.PAPER:
+            executor = PaperExecutor(initial_balance=Decimal("10000"))
+        elif config.execution_mode == ExecutionMode.LIVE:
+            console.print("[red]LIVE mode not yet implemented[/red]")
+            raise typer.Exit(1)
+        else:
+            console.print(f"[red]Invalid mode for run command: {config.execution_mode}[/red]")
+            raise typer.Exit(1)
+
+        # Create TradingEngine
+        engine = TradingEngine(
+            strategy=strat,
+            executor=executor,
+            session_factory=session_factory,
+            risk_settings=config.risk,
+        )
+
+        # Initialize notifier (for future use with trade notifications)
+        # TODO: Integrate notifier with engine events in future phase
+        if config.notifications.discord_enabled:
+            _notifier = DiscordNotifier(
+                webhook_url=config.notifications.discord_webhook_url.get_secret_value(),
+            )
+            del _notifier  # Placeholder - will be used in future phase
+
+        # Start engine
+        await engine.start()
+        console.print("[green]Trading engine started[/green]")
+
+        try:
+            # TODO: Implement automated trading loop in future phase
+            # TODO: Implement interactive mode in future phase
+            if interactive:
+                console.print("[yellow]Interactive mode not yet implemented[/yellow]")
+                console.print("[yellow]Will be added in future phase[/yellow]")
+            else:
+                console.print("[yellow]Automated trading mode not yet implemented[/yellow]")
+                console.print("[yellow]Will be added in future phase[/yellow]")
+
+            # Keep engine running briefly for demonstration
+            console.print("\n[dim]Engine will run for 5 seconds as demonstration...[/dim]")
+            await asyncio.sleep(5)
+        finally:
+            # Graceful shutdown
+            await engine.stop()
+            console.print("\n[green]Trading engine stopped[/green]")
+
+            # Display final summary
+            summary = await engine.get_performance_summary()
+            console.print(f"\nFinal Balance: €{summary.get('balance', 0):,.2f}")
+            console.print(f"Total P&L: €{summary.get('total_pnl', 0):,.2f}")
+
+    run_async(start_trading())
 
 
 @app.command()
@@ -96,9 +202,39 @@ def backtest(
         float,
         typer.Option("--capital", help="Initial capital in EUR."),
     ] = 10000.0,
+    config_path: Annotated[
+        str | None,
+        typer.Option("--config", "-c", help="Path to configuration file."),
+    ] = None,
+    output: Annotated[
+        str | None,
+        typer.Option("--output", "-o", help="Save results to JSON file."),
+    ] = None,
+    plot: Annotated[
+        bool,
+        typer.Option("--plot", help="Show equity curve plot."),
+    ] = True,
+    params: Annotated[
+        str | None,
+        typer.Option("--params", help="Strategy parameters as JSON."),
+    ] = None,
 ) -> None:
     """Run a backtest for a strategy."""
+    import json
+    from datetime import UTC, datetime
+    from decimal import Decimal
+
+    from cryptrink.backtest.engine import BacktestEngine
+    from cryptrink.cli.formatters import format_backtest_results_table
+    from cryptrink.cli.utils import (
+        create_data_feed,
+        create_session_factory,
+        load_strategy,
+        run_async,
+    )
+
     setup_logging()
+    config = load_config(config_path)
 
     console.print(
         Panel(
@@ -112,8 +248,79 @@ def backtest(
         )
     )
 
-    # TODO: Implement backtesting engine
-    console.print("[yellow]Backtesting engine not yet implemented.[/yellow]")
+    # Parse parameters
+    strategy_params = {}
+    if params:
+        try:
+            strategy_params = json.loads(params)
+        except json.JSONDecodeError as e:
+            console.print(f"[red]Invalid JSON in --params: {e}[/red]")
+            raise typer.Exit(1) from e
+
+    # Parse dates
+    try:
+        start_time = datetime.fromisoformat(start_date).replace(tzinfo=UTC)
+        end_time = (
+            datetime.fromisoformat(end_date).replace(tzinfo=UTC) if end_date else datetime.now(UTC)
+        )
+    except ValueError as e:
+        console.print(f"[red]Invalid date format: {e}[/red]")
+        console.print("Expected format: YYYY-MM-DD")
+        raise typer.Exit(1) from e
+
+    async def run_backtest():
+        # Load strategy
+        try:
+            strat = load_strategy(strategy, **strategy_params)
+        except ValueError as e:
+            console.print(f"[red]{e}[/red]")
+            raise typer.Exit(1) from e
+
+        # Create session factory and data feed
+        session_factory = create_session_factory(config)
+        data_feed = create_data_feed(config, session_factory)
+
+        # Create backtest engine
+        engine = BacktestEngine(
+            strategy=strat,
+            data_feed=data_feed,
+            initial_balance=Decimal(str(initial_capital)),
+            session_factory=session_factory,
+            risk_settings=config.risk,
+        )
+
+        # Run backtest
+        console.print("[yellow]Running backtest...[/yellow]")
+        result = await engine.run(
+            symbol=symbol,
+            start_time=start_time,
+            end_time=end_time,
+            timeframe=strat.timeframe,
+        )
+
+        # Display results
+        console.print("\n")
+        result.print_summary()
+        console.print("\n")
+        console.print(format_backtest_results_table(result))
+
+        # Plot equity curve
+        if plot:
+            try:
+                result.plot_equity_curve()
+            except Exception as e:
+                console.print(f"[yellow]Could not display plot: {e}[/yellow]")
+
+        # Save to JSON (using sync IO since we're inside async context)
+        if output:
+            from pathlib import Path
+
+            Path(output).write_text(json.dumps(result.to_dict(), indent=2))
+            console.print(f"\n[green]Results saved to {output}[/green]")
+
+        return result
+
+    run_async(run_backtest())
 
 
 @app.command()
@@ -124,35 +331,342 @@ def suggest(
         str,
         typer.Option("--format", "-f", help="Output format (table, json)."),
     ] = "table",
+    timeframe: Annotated[
+        str,
+        typer.Option("--timeframe", "-t", help="Timeframe (1h, 4h, 1d)."),
+    ] = "1h",
+    config_path: Annotated[
+        str | None,
+        typer.Option("--config", "-c", help="Path to configuration file."),
+    ] = None,
+    params: Annotated[
+        str | None,
+        typer.Option("--params", help="Strategy parameters as JSON."),
+    ] = None,
 ) -> None:
     """Get trade suggestions without executing."""
+    import json
+    from datetime import UTC, datetime, timedelta
+    from decimal import Decimal
+
+    import pandas as pd
+
+    from cryptrink.cli.formatters import format_trade_suggestions_table
+    from cryptrink.cli.utils import (
+        create_data_feed,
+        create_session_factory,
+        load_strategy,
+        run_async,
+    )
+    from cryptrink.strategies.base import SignalType, StrategyContext
+
     setup_logging()
+    config = load_config(config_path)
 
     console.print(
         Panel(
             f"[bold magenta]Trade Suggestions[/bold magenta]\n\n"
             f"Strategy: {strategy}\n"
             f"Symbol: {symbol}\n"
+            f"Timeframe: {timeframe}\n"
             f"Format: {output_format}",
             title="Suggestion Mode",
             border_style="magenta",
         )
     )
 
-    # TODO: Implement suggestion generation
-    console.print("[yellow]Suggestion engine not yet implemented.[/yellow]")
+    # Parse parameters
+    strategy_params = {}
+    if params:
+        try:
+            strategy_params = json.loads(params)
+        except json.JSONDecodeError as e:
+            console.print(f"[red]Invalid JSON in --params: {e}[/red]")
+            raise typer.Exit(1) from e
+
+    async def generate_suggestions():
+        # Load strategy
+        try:
+            strat = load_strategy(strategy, **strategy_params)
+        except ValueError as e:
+            console.print(f"[red]{e}[/red]")
+            raise typer.Exit(1) from e
+
+        # Create data feed
+        session_factory = create_session_factory(config)
+        data_feed = create_data_feed(config, session_factory)
+
+        # Fetch recent OHLCV data
+        console.print("[yellow]Fetching market data...[/yellow]")
+        end_time = datetime.now(UTC)
+        start_time = end_time - timedelta(days=30)  # 30 days of history
+
+        ohlcv_data = await data_feed.get_ohlcv(
+            symbol=symbol,
+            timeframe=timeframe,
+            start_time=start_time,
+            end_time=end_time,
+        )
+
+        if not ohlcv_data:
+            console.print(f"[red]No historical data found for {symbol}[/red]")
+            raise typer.Exit(1) from None
+
+        # Convert to DataFrame
+        df = pd.DataFrame(
+            {
+                "open": [float(c.open) for c in ohlcv_data],
+                "high": [float(c.high) for c in ohlcv_data],
+                "low": [float(c.low) for c in ohlcv_data],
+                "close": [float(c.close) for c in ohlcv_data],
+                "volume": [float(c.volume) for c in ohlcv_data],
+            },
+            index=[c.timestamp for c in ohlcv_data],
+        )
+
+        # Build strategy context
+        current_price = Decimal(str(ohlcv_data[-1].close))
+        context = StrategyContext(
+            symbol=symbol,
+            current_price=current_price,
+            timestamp=ohlcv_data[-1].timestamp,
+            ohlcv=df,
+            has_position=False,
+            position_size=Decimal("0"),
+        )
+
+        # Generate signal
+        signal = strat.generate_signal(context)
+
+        # Display results
+        if signal.signal_type == SignalType.HOLD:
+            console.print("\n[yellow]No trade signal at this time (HOLD)[/yellow]")
+        else:
+            if output_format == "table":
+                console.print("\n")
+                console.print(format_trade_suggestions_table([signal]))
+
+                # Show metadata
+                if signal.metadata:
+                    console.print("\n[bold]Signal Metadata:[/bold]")
+                    for key, value in signal.metadata.items():
+                        console.print(f"  {key}: {value}")
+            else:  # json
+                signal_dict = {
+                    "symbol": signal.symbol,
+                    "type": signal.signal_type.value,
+                    "price": float(signal.price),
+                    "strength": signal.strength.value,
+                    "stop_loss": float(signal.stop_loss) if signal.stop_loss else None,
+                    "take_profit": float(signal.take_profit) if signal.take_profit else None,
+                    "timestamp": signal.timestamp.isoformat(),
+                    "metadata": signal.metadata,
+                }
+                console.print_json(data=signal_dict)
+
+    run_async(generate_suggestions())
 
 
 @app.command()
-def status() -> None:
+def status(
+    config_path: Annotated[
+        str | None,
+        typer.Option("--config", "-c", help="Path to configuration file."),
+    ] = None,
+    engine_id: Annotated[
+        str | None,
+        typer.Option("--engine-id", help="Specific engine ID to query."),
+    ] = None,
+) -> None:
     """Show current trading status and positions."""
-    console.print(
-        Panel(
-            "[bold]Trading Status[/bold]\n\nNo active trading session.",
-            title="Status",
-            border_style="green",
-        )
-    )
+    from sqlalchemy import select
+
+    from cryptrink.cli.formatters import format_engine_status_panel, format_trade_history_table
+    from cryptrink.cli.utils import create_session_factory, run_async
+    from cryptrink.execution.models import EngineState, Position
+
+    setup_logging()
+    config = load_config(config_path)
+
+    async def query_status():
+        session_factory = create_session_factory(config)
+
+        async with session_factory() as session:
+            # Query engine state
+            if engine_id:
+                stmt = select(EngineState).where(EngineState.engine_id == engine_id)
+            else:
+                # Get most recent engine
+                stmt = select(EngineState).order_by(EngineState.updated_at.desc()).limit(1)
+
+            result = await session.execute(stmt)
+            engine_state = result.scalar_one_or_none()
+
+            if not engine_state:
+                console.print(
+                    Panel(
+                        "[bold]Trading Status[/bold]\n\nNo active trading session.",
+                        title="Status",
+                        border_style="green",
+                    )
+                )
+                return
+
+            # Query open positions
+            stmt = select(Position).where(
+                Position.status == "open",
+                Position.engine_id == engine_state.engine_id,
+            )
+            result = await session.execute(stmt)
+            open_positions = list(result.scalars().all())
+
+            # Build status dict
+            status_dict = {
+                "engine_id": engine_state.engine_id,
+                "strategy": engine_state.strategy_name,
+                "mode": engine_state.execution_mode,
+                "is_running": engine_state.is_running,
+                "balance": float(engine_state.current_balance),
+                "realized_pnl": float(engine_state.total_realized_pnl or 0),
+                "unrealized_pnl": sum(float(p.unrealized_pnl or 0) for p in open_positions),
+                "open_positions": len(open_positions),
+                "signal_count": engine_state.signal_count,
+                "execution_count": engine_state.execution_count,
+            }
+
+            # Display status
+            console.print(format_engine_status_panel(status_dict))
+
+            # Show open positions if any
+            if open_positions:
+                console.print("\n[bold]Open Positions:[/bold]")
+                console.print(format_trade_history_table(open_positions))
+
+    run_async(query_status())
+
+
+@app.command()
+def history(
+    config_path: Annotated[
+        str | None,
+        typer.Option("--config", "-c", help="Path to configuration file."),
+    ] = None,
+    symbol: Annotated[
+        str | None,
+        typer.Option("--symbol", help="Filter by symbol."),
+    ] = None,
+    limit: Annotated[
+        int,
+        typer.Option("--limit", "-n", help="Number of records to show."),
+    ] = 50,
+    status_filter: Annotated[
+        str,
+        typer.Option("--status", help="Filter by status (closed, open, all)."),
+    ] = "closed",
+    output_format: Annotated[
+        str,
+        typer.Option("--format", "-f", help="Output format (table, json)."),
+    ] = "table",
+    show_orders: Annotated[
+        bool,
+        typer.Option("--orders", help="Show orders instead of positions."),
+    ] = False,
+) -> None:
+    """Show trade/order history from database."""
+
+    from sqlalchemy import select
+
+    from cryptrink.cli.formatters import format_order_history_table, format_trade_history_table
+    from cryptrink.cli.utils import create_session_factory, run_async
+    from cryptrink.execution.models import Order, Position
+
+    setup_logging()
+    config = load_config(config_path)
+
+    async def query_history():
+        session_factory = create_session_factory(config)
+
+        async with session_factory() as session:
+            if show_orders:
+                # Query orders
+                stmt = select(Order)
+                if symbol:
+                    stmt = stmt.where(Order.symbol == symbol)
+                stmt = stmt.order_by(Order.created_at.desc()).limit(limit)
+
+                result = await session.execute(stmt)
+                orders = list(result.scalars().all())
+
+                if not orders:
+                    console.print("[yellow]No orders found[/yellow]")
+                    return
+
+                if output_format == "table":
+                    console.print(format_order_history_table(orders))
+                else:  # json
+                    orders_dict = [
+                        {
+                            "symbol": o.symbol,
+                            "side": o.side,
+                            "type": o.order_type,
+                            "status": o.status,
+                            "quantity": float(o.quantity),
+                            "price": float(o.price) if o.price else None,
+                            "created_at": o.created_at.isoformat(),
+                        }
+                        for o in orders
+                    ]
+                    console.print_json(data=orders_dict)
+            else:
+                # Query positions
+                stmt = select(Position)
+                if symbol:
+                    stmt = stmt.where(Position.symbol == symbol)
+                if status_filter != "all":
+                    stmt = stmt.where(Position.status == status_filter)
+                stmt = stmt.order_by(Position.closed_at.desc()).limit(limit)
+
+                result = await session.execute(stmt)
+                positions = list(result.scalars().all())
+
+                if not positions:
+                    console.print("[yellow]No positions found[/yellow]")
+                    return
+
+                if output_format == "table":
+                    console.print(format_trade_history_table(positions))
+
+                    # Show summary statistics
+                    total_trades = len(positions)
+                    winning_trades = sum(
+                        1 for p in positions if p.realized_pnl and p.realized_pnl > 0
+                    )
+                    total_pnl = sum(p.realized_pnl or 0 for p in positions)
+                    win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
+
+                    console.print("\n[bold]Summary:[/bold]")
+                    console.print(f"Total Trades: {total_trades}")
+                    console.print(f"Win Rate: {win_rate:.1f}%")
+                    console.print(f"Total P&L: €{float(total_pnl):,.2f}")
+                else:  # json
+                    positions_dict = [
+                        {
+                            "symbol": p.symbol,
+                            "side": p.side,
+                            "entry_price": float(p.average_entry_price),
+                            "exit_price": float(p.average_exit_price)
+                            if p.average_exit_price
+                            else None,
+                            "pnl": float(p.realized_pnl or 0),
+                            "fees": float(p.total_fees or 0),
+                            "opened_at": p.opened_at.isoformat(),
+                            "closed_at": p.closed_at.isoformat() if p.closed_at else None,
+                        }
+                        for p in positions
+                    ]
+                    console.print_json(data=positions_dict)
+
+    run_async(query_history())
 
 
 if __name__ == "__main__":

@@ -168,7 +168,7 @@ class BacktestResult:
             save_path: If provided, save figure to file instead of showing.
         """
         try:
-            import matplotlib.pyplot as plt
+            import matplotlib.pyplot as plt  # type: ignore[import-not-found]
         except ImportError as e:
             msg = "matplotlib is required for plotting. Install with: pip install matplotlib"
             raise ImportError(msg) from e
@@ -180,7 +180,7 @@ class BacktestResult:
         equity = [float(eq) for _, eq in self.equity_curve]
 
         # Plot equity curve (matplotlib handles datetime objects automatically)
-        ax1.plot(timestamps, equity, label="Equity", color="blue", linewidth=2)  # type: ignore[arg-type]
+        ax1.plot(timestamps, equity, label="Equity", color="blue", linewidth=2)
         ax1.set_xlabel("Date")
         ax1.set_ylabel("Equity ($)", color="blue")
         ax1.tick_params(axis="y", labelcolor="blue")
@@ -200,9 +200,9 @@ class BacktestResult:
             ax2 = ax1.twinx()
             dd_timestamps = [ts for ts, _ in self.drawdown_curve]
             dd_values = [float(dd) * -100 for _, dd in self.drawdown_curve]  # As negative %
-            # Matplotlib fill_between handles datetime objects (type stubs are incomplete)
+            # Matplotlib fill_between handles datetime objects
             ax2.fill_between(
-                dd_timestamps,  # type: ignore[arg-type]
+                dd_timestamps,
                 dd_values,
                 0,
                 alpha=0.3,

@@ -11,7 +11,7 @@ This module provides the main BacktestEngine class that coordinates:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
@@ -27,9 +27,9 @@ from cryptrink.strategies.base import StrategyContext
 
 if TYPE_CHECKING:
     from cryptrink.backtest.result import BacktestResult
-    from cryptrink.data.feeds import HistoricalDataFeed  # type: ignore[import-untyped]
-    from cryptrink.data.models import OHLCV  # type: ignore[import-untyped]
-    from cryptrink.execution.risk import RiskSettings  # type: ignore[import-untyped]
+    from cryptrink.core.config import RiskSettings
+    from cryptrink.data.feed import HistoricalDataFeed
+    from cryptrink.data.storage import OHLCV
     from cryptrink.strategies.base import BaseStrategy
 
 logger = get_logger(__name__)
@@ -182,8 +182,12 @@ class BacktestEngine:
             "historical_data_loaded",
             symbol=symbol,
             candles=len(ohlcv_data),
-            first_candle=ohlcv_data[0].timestamp.isoformat(),
-            last_candle=ohlcv_data[-1].timestamp.isoformat(),
+            first_candle=ohlcv_data[0]["timestamp"].isoformat()
+            if isinstance(ohlcv_data[0]["timestamp"], datetime)
+            else str(ohlcv_data[0]["timestamp"]),
+            last_candle=ohlcv_data[-1]["timestamp"].isoformat()
+            if isinstance(ohlcv_data[-1]["timestamp"], datetime)
+            else str(ohlcv_data[-1]["timestamp"]),
         )
 
         # 4. Convert to DataFrame for strategy
@@ -196,7 +200,8 @@ class BacktestEngine:
         # 6. Event-by-event replay
         for candle in ohlcv_data:
             # Skip lookback period (indicators need historical data)
-            if candle.timestamp < start_time:
+            candle_ts = candle["timestamp"]
+            if isinstance(candle_ts, datetime) and candle_ts < start_time:
                 continue
 
             # TODO: Integration with strategy signal generation
@@ -212,16 +217,18 @@ class BacktestEngine:
             # Process candle via TradingEngine
             await self._engine.process_signal(
                 symbol=symbol,
-                current_price=candle.close,
-                timestamp=candle.timestamp,
+                current_price=Decimal(str(candle["close"])),
+                timestamp=candle_ts if isinstance(candle_ts, datetime) else datetime.now(UTC),
             )
 
             # Record equity at this point
             current_equity = self._executor.balance
-            self._equity_curve.append((candle.timestamp, current_equity))
+            candle_time = candle_ts if isinstance(candle_ts, datetime) else datetime.now(UTC)
+            self._equity_curve.append((candle_time, current_equity))
 
         # 7. Close any open positions at end
-        await self._close_all_positions(symbol, ohlcv_data[-1].close, end_time)
+        final_price = Decimal(str(ohlcv_data[-1]["close"]))
+        await self._close_all_positions(symbol, final_price, end_time)
 
         # 8. Calculate comprehensive metrics
         result = await self._calculate_results(
