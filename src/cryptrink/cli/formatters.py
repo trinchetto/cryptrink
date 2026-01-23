@@ -193,22 +193,22 @@ def format_engine_status_panel(status: dict[str, Any]) -> Panel:
     Returns:
         Rich Panel with formatted status.
     """
-    content = f"""[bold]Engine ID:[/bold] {status.get('engine_id', 'N/A')}
-[bold]Strategy:[/bold] {status.get('strategy', 'N/A')}
-[bold]Mode:[/bold] {status.get('mode', 'N/A')}
-[bold]Running:[/bold] {'✅ Yes' if status.get('is_running') else '❌ No'}
+    content = f"""[bold]Engine ID:[/bold] {status.get("engine_id", "N/A")}
+[bold]Strategy:[/bold] {status.get("strategy", "N/A")}
+[bold]Mode:[/bold] {status.get("mode", "N/A")}
+[bold]Running:[/bold] {"✅ Yes" if status.get("is_running") else "❌ No"}
 
 [bold cyan]Balance & P&L:[/bold cyan]
-Balance: €{status.get('balance', 0):,.2f}
-Realized P&L: €{status.get('realized_pnl', 0):,.2f}
-Unrealized P&L: €{status.get('unrealized_pnl', 0):,.2f}
+Balance: €{status.get("balance", 0):,.2f}
+Realized P&L: €{status.get("realized_pnl", 0):,.2f}
+Unrealized P&L: €{status.get("unrealized_pnl", 0):,.2f}
 
 [bold cyan]Positions:[/bold cyan]
-Open Positions: {status.get('open_positions', 0)}
+Open Positions: {status.get("open_positions", 0)}
 
 [bold cyan]Activity:[/bold cyan]
-Signals Processed: {status.get('signal_count', 0)}
-Executions: {status.get('execution_count', 0)}
+Signals Processed: {status.get("signal_count", 0)}
+Executions: {status.get("execution_count", 0)}
 """
 
     return Panel(content, title="Trading Engine Status", border_style="green")
