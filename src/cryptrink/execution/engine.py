@@ -104,11 +104,13 @@ class TradingEngine:
         symbol: str,
         current_price: Decimal,
         timestamp: datetime | None = None,
+        signal: Signal | None = None,
     ) -> ExecutionResult:
         """Process market data and execute trading logic.
 
         This is the main entry point for the trading engine. It:
-        1. Generates signal from strategy
+        1. Uses the provided signal, or falls back to a HOLD placeholder when
+           no caller-supplied signal is available.
         2. Validates signal against risk management rules
         3. Executes signal via executor
         4. Records order and position updates
@@ -117,6 +119,10 @@ class TradingEngine:
             symbol: Trading symbol to process.
             current_price: Current market price.
             timestamp: Optional timestamp (defaults to now).
+            signal: Optional pre-computed signal from the strategy. If omitted,
+                a HOLD signal is used as a placeholder so the rest of the
+                pipeline (risk validation, executor dispatch, persistence)
+                still runs.
 
         Returns:
             ExecutionResult with outcome of the signal processing.
@@ -150,27 +156,23 @@ class TradingEngine:
             position_size=position_size,
         )
 
-        # Generate signal from strategy
-        # Note: Strategy needs market data - this is simplified, real implementation
-        # would pass historical data to strategy.generate_signal()
-        logger.debug(
-            "generating_signal",
-            symbol=symbol,
-            price=float(current_price),
-            has_position=has_position,
-        )
-
-        # For now, we'll assume the strategy has access to the data it needs
-        # In a real implementation, you'd call strategy.generate_signal(market_data)
-        # This is a placeholder - the actual integration would depend on how
-        # market data is fed to the engine
-        signal = Signal(
-            signal_type=SignalType.HOLD,
-            symbol=symbol,
-            timestamp=timestamp,
-            price=current_price,
-            strength=SignalStrength.MODERATE,
-        )
+        if signal is None:
+            # No caller-supplied signal: emit a HOLD placeholder. Callers that
+            # want real strategy output (BacktestEngine, future live loop) are
+            # expected to compute the signal themselves and pass it in.
+            logger.debug(
+                "no_signal_supplied_using_hold_placeholder",
+                symbol=symbol,
+                price=float(current_price),
+                has_position=has_position,
+            )
+            signal = Signal(
+                signal_type=SignalType.HOLD,
+                symbol=symbol,
+                timestamp=timestamp,
+                price=current_price,
+                strength=SignalStrength.MODERATE,
+            )
 
         # Validate signal against risk management rules
         if not await self._validate_signal(signal, context):
