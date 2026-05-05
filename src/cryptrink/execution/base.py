@@ -10,14 +10,14 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Protocol, TypedDict
 
 if TYPE_CHECKING:
     from cryptrink.strategies.base import Signal, SignalType
 
 
-class ExecutionMode(str, Enum):
+class ExecutionMode(StrEnum):
     """Execution mode for the trading engine.
 
     - LIVE: Execute real orders on the exchange
@@ -32,21 +32,21 @@ class ExecutionMode(str, Enum):
     BACKTEST = "backtest"
 
 
-class OrderType(str, Enum):
+class OrderType(StrEnum):
     """Order type."""
 
     MARKET = "market"
     LIMIT = "limit"
 
 
-class OrderSide(str, Enum):
+class OrderSide(StrEnum):
     """Order side (buy or sell)."""
 
     BUY = "buy"
     SELL = "sell"
 
 
-class OrderStatus(str, Enum):
+class OrderStatus(StrEnum):
     """Order status throughout its lifecycle."""
 
     PENDING = "pending"  # Created but not yet submitted
