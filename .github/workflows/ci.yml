@@ -39,12 +39,12 @@ jobs:
 
       - name: Install dependencies
         if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
-        run: poetry install --no-interaction
+        run: poetry install --no-interaction --all-extras
 
       - name: Lint and check formatting with Ruff
         run: |
-          poetry run ruff check src/ tests/
-          poetry run ruff format --check src/ tests/
+          poetry run ruff check src/ tests/ app.py
+          poetry run ruff format --check src/ tests/ app.py
 
       - name: Type check with mypy
         run: poetry run mypy src/
@@ -76,7 +76,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
-        run: poetry install --no-interaction
+        run: poetry install --no-interaction --all-extras
 
       - name: Run tests with coverage
         run: |
@@ -170,7 +170,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
-        run: poetry install --no-interaction
+        run: poetry install --no-interaction --all-extras
 
       - name: Run integration tests
         env:
