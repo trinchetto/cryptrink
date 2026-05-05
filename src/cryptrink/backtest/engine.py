@@ -174,7 +174,10 @@ class BacktestEngine:
         )
 
         if not ohlcv_data:
-            msg = f"No historical data found for {symbol} {timeframe}"
+            msg = (
+                f"No historical data found for {symbol} {timeframe} between "
+                f"{lookback_start.isoformat()} and {end_time.isoformat()}"
+            )
             raise ValueError(msg)
 
         logger.info(
