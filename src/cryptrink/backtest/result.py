@@ -179,7 +179,8 @@ class BacktestResult:
         timestamps = [ts for ts, _ in self.equity_curve]
         equity = [float(eq) for _, eq in self.equity_curve]
 
-        # Plot equity curve (matplotlib handles datetime objects automatically)
+        # Plot equity curve (matplotlib handles datetime objects automatically;
+        # the type stubs do not, hence the ignore).
         ax1.plot(timestamps, equity, label="Equity", color="blue", linewidth=2)  # type: ignore[arg-type]
         ax1.set_xlabel("Date")
         ax1.set_ylabel("Equity ($)", color="blue")

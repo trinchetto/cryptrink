@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 import pandas as pd
@@ -12,7 +12,7 @@ import pandas as pd
 from cryptrink.exchange.base import OrderSide
 
 
-class SignalType(str, Enum):
+class SignalType(StrEnum):
     """Type of trading signal."""
 
     ENTRY_LONG = "entry_long"
@@ -22,7 +22,7 @@ class SignalType(str, Enum):
     HOLD = "hold"
 
 
-class SignalStrength(str, Enum):
+class SignalStrength(StrEnum):
     """Strength/confidence of the signal."""
 
     WEAK = "weak"
