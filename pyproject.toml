@@ -97,7 +97,7 @@ respx = "^0.22"
 pytest-mock = "^3.14"
 
 # Linting & Formatting
-ruff = "^0.14"
+ruff = "^0.15"
 mypy = "^1.14"
 pre-commit = "^4.0"
 
