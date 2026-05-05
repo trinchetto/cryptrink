@@ -26,35 +26,33 @@ from cryptrink.strategies.base import (
 )
 
 
-class MockOHLCV:
-    """Mock OHLCV candle for testing."""
-
-    def __init__(
-        self,
-        symbol: str,
-        timeframe: str,
-        timestamp: datetime,
-        open: Decimal,
-        high: Decimal,
-        low: Decimal,
-        close: Decimal,
-        volume: Decimal,
-    ):
-        """Initialize mock OHLCV."""
-        self.symbol = symbol
-        self.timeframe = timeframe
-        self.timestamp = timestamp
-        self.open = open
-        self.high = high
-        self.low = low
-        self.close = close
-        self.volume = volume
+def MockOHLCV(
+    symbol: str,
+    timeframe: str,
+    timestamp: datetime,
+    open: Decimal,
+    high: Decimal,
+    low: Decimal,
+    close: Decimal,
+    volume: Decimal,
+) -> dict[str, object]:
+    """Build a dict-shaped OHLCV candle that matches HistoricalDataFeed output."""
+    return {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "timestamp": timestamp,
+        "open": open,
+        "high": high,
+        "low": low,
+        "close": close,
+        "volume": volume,
+    }
 
 
 class DummyDataFeed:
     """Dummy historical data feed for testing."""
 
-    def __init__(self, ohlcv_data: list[MockOHLCV]):
+    def __init__(self, ohlcv_data: list[dict[str, object]]):
         """Initialize with OHLCV data."""
         self._data = ohlcv_data
 
@@ -64,9 +62,9 @@ class DummyDataFeed:
         timeframe: str,
         start_time: datetime,
         end_time: datetime,
-    ) -> list[MockOHLCV]:
+    ) -> list[dict[str, object]]:
         """Return filtered OHLCV data."""
-        return [candle for candle in self._data if start_time <= candle.timestamp <= end_time]
+        return [candle for candle in self._data if start_time <= candle["timestamp"] <= end_time]
 
 
 class AlwaysHoldStrategy(BaseStrategy):
@@ -268,9 +266,8 @@ class TestBacktestEngineBasicFlow:
 class TestBacktestEngineWithTrades:
     """Tests for backtest with actual trading.
 
-    Note: Currently limited by TradingEngine generating HOLD signals internally.
-    These tests verify the infrastructure works, but actual strategy signals
-    won't be executed until TradingEngine integration is complete.
+    Strategy signals are now routed from BacktestEngine into TradingEngine,
+    so these tests assert that trades actually execute end-to-end.
     """
 
     @pytest.mark.asyncio
@@ -295,10 +292,14 @@ class TestBacktestEngineWithTrades:
         assert result.strategy_name == "SimpleBuyHoldStrategy"
         assert result.initial_balance == Decimal("10000")
 
-        # TODO: Once TradingEngine supports strategy signals, verify:
-        # - At least 1 trade was executed
-        # - Balance changed from initial
-        # - Position was opened and closed
+        # Strategy signals are now executed: SimpleBuyHoldStrategy emits an
+        # ENTRY_LONG on the first in-window candle, the executor opens a
+        # position, and end-of-backtest forces it closed -- so the ending
+        # balance must differ from the initial deposit.
+        # NOTE: result.metrics.total_trades is read from the engine's
+        # PositionTracker, which BacktestExecutor does not yet sync to;
+        # ending_equity is the unambiguous signal that trades executed.
+        assert result.metrics.ending_equity != Decimal("10000")
 
 
 class TestBacktestEngineMetrics:

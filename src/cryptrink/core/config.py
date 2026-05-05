@@ -1,7 +1,7 @@
 """Configuration management for Cryptrink."""
 
 import os
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +15,7 @@ if os.getenv("PYTEST_CURRENT_TEST") is None:
     load_dotenv(".env.local")
 
 
-class ExecutionMode(str, Enum):
+class ExecutionMode(StrEnum):
     """Trading execution mode."""
 
     LIVE = "live"
@@ -99,7 +99,7 @@ class RevolutXSettings(BaseSettings):
         raise ValueError(msg)
 
 
-class SizingStrategy(str, Enum):
+class SizingStrategy(StrEnum):
     """Position sizing strategy.
 
     - FIXED_FRACTIONAL: Risk a fixed percentage per trade based on stop-loss distance

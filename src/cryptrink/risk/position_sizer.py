@@ -7,7 +7,7 @@ appropriate trade quantities based on account risk parameters.
 from __future__ import annotations
 
 from decimal import Decimal
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from cryptrink.core.logging import get_logger
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-class SizingStrategy(str, Enum):
+class SizingStrategy(StrEnum):
     """Position sizing strategy.
 
     - FIXED_FRACTIONAL: Risk a fixed percentage per trade based on stop-loss distance

@@ -7,7 +7,7 @@ import time
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Self
 
-import aiohttp  # type: ignore[import-not-found]
+import aiohttp
 
 from cryptrink.core.logging import get_logger
 

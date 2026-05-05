@@ -119,7 +119,7 @@ def run(
             console.print(f"[red]Invalid JSON in --params: {e}[/red]")
             raise typer.Exit(1) from e
 
-    async def start_trading():
+    async def start_trading() -> None:
         # Load strategy
         try:
             strat = load_strategy(config.default_strategy, **strategy_params)
@@ -268,7 +268,7 @@ def backtest(
         console.print("Expected format: YYYY-MM-DD")
         raise typer.Exit(1) from e
 
-    async def run_backtest():
+    async def run_backtest() -> None:
         # Load strategy
         try:
             strat = load_strategy(strategy, **strategy_params)
@@ -315,10 +315,10 @@ def backtest(
         if output:
             from pathlib import Path
 
-            Path(output).write_text(json.dumps(result.to_dict(), indent=2))
+            Path(output).write_text(  # noqa: ASYNC240 - sync write is acceptable for one-shot CLI export
+                json.dumps(result.to_dict(), indent=2)
+            )
             console.print(f"\n[green]Results saved to {output}[/green]")
-
-        return result
 
     run_async(run_backtest())
 
@@ -384,7 +384,7 @@ def suggest(
             console.print(f"[red]Invalid JSON in --params: {e}[/red]")
             raise typer.Exit(1) from e
 
-    async def generate_suggestions():
+    async def generate_suggestions() -> None:
         # Load strategy
         try:
             strat = load_strategy(strategy, **strategy_params)
@@ -415,23 +415,26 @@ def suggest(
         # Convert to DataFrame
         df = pd.DataFrame(
             {
-                "open": [float(c.open) for c in ohlcv_data],
-                "high": [float(c.high) for c in ohlcv_data],
-                "low": [float(c.low) for c in ohlcv_data],
-                "close": [float(c.close) for c in ohlcv_data],
-                "volume": [float(c.volume) for c in ohlcv_data],
+                "open": [float(c["open"]) for c in ohlcv_data],
+                "high": [float(c["high"]) for c in ohlcv_data],
+                "low": [float(c["low"]) for c in ohlcv_data],
+                "close": [float(c["close"]) for c in ohlcv_data],
+                "volume": [float(c["volume"]) for c in ohlcv_data],
             },
-            index=[c.timestamp for c in ohlcv_data],
+            index=[c["timestamp"] for c in ohlcv_data],
         )
 
-        # Build strategy context
-        current_price = Decimal(str(ohlcv_data[-1].close))
+        # Build strategy context (HistoricalDataFeed returns dict-shaped candles)
+        last_candle = ohlcv_data[-1]
+        current_price = Decimal(str(last_candle["close"]))
+        last_timestamp = last_candle["timestamp"]
+        if not isinstance(last_timestamp, datetime):
+            last_timestamp = datetime.now(UTC)
         context = StrategyContext(
             symbol=symbol,
             current_price=current_price,
-            timestamp=ohlcv_data[-1].timestamp,
+            timestamp=last_timestamp,
             ohlcv=df,
-            has_position=False,
             position_size=Decimal("0"),
         )
 
@@ -479,6 +482,8 @@ def status(
     ] = None,
 ) -> None:
     """Show current trading status and positions."""
+    from decimal import Decimal
+
     from sqlalchemy import select
 
     from cryptrink.cli.formatters import format_engine_status_panel, format_trade_history_table
@@ -488,19 +493,19 @@ def status(
     setup_logging()
     config = load_config(config_path)
 
-    async def query_status():
+    async def query_status() -> None:
         session_factory = create_session_factory(config)
 
         async with session_factory() as session:
             # Query engine state
             if engine_id:
-                stmt = select(EngineState).where(EngineState.engine_id == engine_id)
+                engine_stmt = select(EngineState).where(EngineState.engine_id == engine_id)
             else:
                 # Get most recent engine
-                stmt = select(EngineState).order_by(EngineState.updated_at.desc()).limit(1)
+                engine_stmt = select(EngineState).order_by(EngineState.updated_at.desc()).limit(1)
 
-            result = await session.execute(stmt)
-            engine_state = result.scalar_one_or_none()
+            engine_result = await session.execute(engine_stmt)
+            engine_state = engine_result.scalar_one_or_none()
 
             if not engine_state:
                 console.print(
@@ -512,23 +517,25 @@ def status(
                 )
                 return
 
-            # Query open positions
-            stmt = select(Position).where(
-                Position.status == "open",
-                Position.engine_id == engine_state.engine_id,
+            # Query open positions (Position has no engine_id link, so we show all open).
+            position_stmt = select(Position).where(Position.status == "open")
+            position_result = await session.execute(position_stmt)
+            open_positions = list(position_result.scalars().all())
+
+            unrealized_pnl_total = sum(
+                (p.unrealized_pnl_decimal for p in open_positions),
+                Decimal("0"),
             )
-            result = await session.execute(stmt)
-            open_positions = list(result.scalars().all())
 
             # Build status dict
             status_dict = {
                 "engine_id": engine_state.engine_id,
                 "strategy": engine_state.strategy_name,
-                "mode": engine_state.execution_mode,
+                "mode": engine_state.executor_mode,
                 "is_running": engine_state.is_running,
-                "balance": float(engine_state.current_balance),
-                "realized_pnl": float(engine_state.total_realized_pnl or 0),
-                "unrealized_pnl": sum(float(p.unrealized_pnl or 0) for p in open_positions),
+                "balance": float(engine_state.current_balance_decimal),
+                "realized_pnl": float(engine_state.total_realized_pnl_decimal),
+                "unrealized_pnl": float(unrealized_pnl_total),
                 "open_positions": len(open_positions),
                 "signal_count": engine_state.signal_count,
                 "execution_count": engine_state.execution_count,
@@ -574,6 +581,8 @@ def history(
 ) -> None:
     """Show trade/order history from database."""
 
+    from decimal import Decimal
+
     from sqlalchemy import select
 
     from cryptrink.cli.formatters import format_order_history_table, format_trade_history_table
@@ -583,19 +592,19 @@ def history(
     setup_logging()
     config = load_config(config_path)
 
-    async def query_history():
+    async def query_history() -> None:
         session_factory = create_session_factory(config)
 
         async with session_factory() as session:
             if show_orders:
                 # Query orders
-                stmt = select(Order)
+                order_stmt = select(Order)
                 if symbol:
-                    stmt = stmt.where(Order.symbol == symbol)
-                stmt = stmt.order_by(Order.created_at.desc()).limit(limit)
+                    order_stmt = order_stmt.where(Order.symbol == symbol)
+                order_stmt = order_stmt.order_by(Order.created_at.desc()).limit(limit)
 
-                result = await session.execute(stmt)
-                orders = list(result.scalars().all())
+                order_result = await session.execute(order_stmt)
+                orders = list(order_result.scalars().all())
 
                 if not orders:
                     console.print("[yellow]No orders found[/yellow]")
@@ -610,24 +619,26 @@ def history(
                             "side": o.side,
                             "type": o.order_type,
                             "status": o.status,
-                            "quantity": float(o.quantity),
-                            "price": float(o.price) if o.price else None,
-                            "created_at": o.created_at.isoformat(),
+                            "quantity": float(o.quantity_decimal),
+                            "price": float(o.price_decimal)
+                            if o.price_decimal is not None
+                            else None,
+                            "created_at": o.created_datetime.isoformat(),
                         }
                         for o in orders
                     ]
                     console.print_json(data=orders_dict)
             else:
                 # Query positions
-                stmt = select(Position)
+                position_stmt = select(Position)
                 if symbol:
-                    stmt = stmt.where(Position.symbol == symbol)
+                    position_stmt = position_stmt.where(Position.symbol == symbol)
                 if status_filter != "all":
-                    stmt = stmt.where(Position.status == status_filter)
-                stmt = stmt.order_by(Position.closed_at.desc()).limit(limit)
+                    position_stmt = position_stmt.where(Position.status == status_filter)
+                position_stmt = position_stmt.order_by(Position.closed_at.desc()).limit(limit)
 
-                result = await session.execute(stmt)
-                positions = list(result.scalars().all())
+                position_result = await session.execute(position_stmt)
+                positions = list(position_result.scalars().all())
 
                 if not positions:
                     console.print("[yellow]No positions found[/yellow]")
@@ -638,10 +649,11 @@ def history(
 
                     # Show summary statistics
                     total_trades = len(positions)
-                    winning_trades = sum(
-                        1 for p in positions if p.realized_pnl and p.realized_pnl > 0
+                    winning_trades = sum(1 for p in positions if p.realized_pnl_decimal > 0)
+                    total_pnl = sum(
+                        (p.realized_pnl_decimal for p in positions),
+                        Decimal("0"),
                     )
-                    total_pnl = sum(p.realized_pnl or 0 for p in positions)
                     win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
 
                     console.print("\n[bold]Summary:[/bold]")
@@ -653,14 +665,20 @@ def history(
                         {
                             "symbol": p.symbol,
                             "side": p.side,
-                            "entry_price": float(p.average_entry_price),
-                            "exit_price": float(p.average_exit_price)
-                            if p.average_exit_price
-                            else None,
-                            "pnl": float(p.realized_pnl or 0),
-                            "fees": float(p.total_fees or 0),
-                            "opened_at": p.opened_at.isoformat(),
-                            "closed_at": p.closed_at.isoformat() if p.closed_at else None,
+                            "entry_price": float(p.entry_price_decimal),
+                            "exit_price": (
+                                float(p.exit_price_decimal)
+                                if p.exit_price_decimal is not None
+                                else None
+                            ),
+                            "pnl": float(p.realized_pnl_decimal),
+                            "fees": float(p.total_fees_decimal),
+                            "opened_at": p.opened_datetime.isoformat(),
+                            "closed_at": (
+                                p.closed_datetime.isoformat()
+                                if p.closed_datetime is not None
+                                else None
+                            ),
                         }
                         for p in positions
                     ]
