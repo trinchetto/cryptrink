@@ -26,35 +26,33 @@ from cryptrink.strategies.base import (
 )
 
 
-class MockOHLCV:
-    """Mock OHLCV candle for testing."""
-
-    def __init__(
-        self,
-        symbol: str,
-        timeframe: str,
-        timestamp: datetime,
-        open: Decimal,
-        high: Decimal,
-        low: Decimal,
-        close: Decimal,
-        volume: Decimal,
-    ):
-        """Initialize mock OHLCV."""
-        self.symbol = symbol
-        self.timeframe = timeframe
-        self.timestamp = timestamp
-        self.open = open
-        self.high = high
-        self.low = low
-        self.close = close
-        self.volume = volume
+def MockOHLCV(
+    symbol: str,
+    timeframe: str,
+    timestamp: datetime,
+    open: Decimal,
+    high: Decimal,
+    low: Decimal,
+    close: Decimal,
+    volume: Decimal,
+) -> dict[str, object]:
+    """Build a dict-shaped OHLCV candle that matches HistoricalDataFeed output."""
+    return {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "timestamp": timestamp,
+        "open": open,
+        "high": high,
+        "low": low,
+        "close": close,
+        "volume": volume,
+    }
 
 
 class DummyDataFeed:
     """Dummy historical data feed for testing."""
 
-    def __init__(self, ohlcv_data: list[MockOHLCV]):
+    def __init__(self, ohlcv_data: list[dict[str, object]]):
         """Initialize with OHLCV data."""
         self._data = ohlcv_data
 
@@ -64,9 +62,9 @@ class DummyDataFeed:
         timeframe: str,
         start_time: datetime,
         end_time: datetime,
-    ) -> list[MockOHLCV]:
+    ) -> list[dict[str, object]]:
         """Return filtered OHLCV data."""
-        return [candle for candle in self._data if start_time <= candle.timestamp <= end_time]
+        return [candle for candle in self._data if start_time <= candle["timestamp"] <= end_time]
 
 
 class AlwaysHoldStrategy(BaseStrategy):
