@@ -39,9 +39,6 @@ dependencies = [
     "pandas>=2.2,<3.0",
     "numpy>=2.0,<3.0",
 
-    # Technical analysis
-    "pandas-ta>=0.3.14b0,<1.0",
-
     # Database
     "sqlalchemy>=2.0,<3.0",
     "aiosqlite>=0.20,<1.0",
@@ -166,7 +163,6 @@ plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
 module = [
-    "pandas_ta.*",
     "apscheduler.*",
 ]
 ignore_missing_imports = true
