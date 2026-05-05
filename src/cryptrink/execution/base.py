@@ -9,7 +9,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 from enum import Enum
 from typing import TYPE_CHECKING, Protocol, TypedDict
 
@@ -266,8 +266,11 @@ def calculate_quantity(
     notional_value = context.available_balance * allocation
     quantity = notional_value / context.current_price
 
-    # Round to 8 decimal places
-    return quantity.quantize(Decimal("0.00000001"))
+    # Round toward zero to 8 decimal places so the resulting position value
+    # never exceeds the requested allocation. Banker's rounding can tip the
+    # quantity up by half a satoshi, which then breaches max_position_size_pct
+    # at the validator and rejects perfectly sized orders.
+    return quantity.quantize(Decimal("0.00000001"), rounding=ROUND_DOWN)
 
 
 def validate_order(

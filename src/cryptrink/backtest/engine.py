@@ -186,34 +186,34 @@ class BacktestEngine:
             last_candle=ohlcv_data[-1].timestamp.isoformat(),
         )
 
-        # 4. Convert to DataFrame for strategy
-        # TODO: Enable DataFrame conversion when strategy integration is complete
-        # See TODO in event-by-event replay loop below
+        # 4. Convert to DataFrame once; per-candle context slices a rolling
+        #    window from this single frame.
+        df = self._build_dataframe(ohlcv_data)
 
         # 5. Record initial equity
         self._equity_curve.append((start_time, self._initial_balance))
 
-        # 6. Event-by-event replay
-        for candle in ohlcv_data:
+        # 6. Event-by-event replay: for each in-window candle, build a
+        #    StrategyContext over the rolling history, ask the strategy for a
+        #    signal, and route it through TradingEngine for risk validation
+        #    and execution.
+        for current_index, candle in enumerate(ohlcv_data):
             # Skip lookback period (indicators need historical data)
             if candle.timestamp < start_time:
                 continue
 
-            # TODO: Integration with strategy signal generation
-            # Currently, TradingEngine.process_signal() generates a HOLD signal internally.
-            # Full integration would require:
-            # 1. Building StrategyContext from historical data up to current candle
-            # 2. Calling strategy.generate_signal(context)
-            # 3. Passing signal to TradingEngine for execution
-            #
-            # For now, this processes each candle through TradingEngine which maintains
-            # positions and tracks equity, but doesn't execute actual strategy signals.
+            context = self._build_strategy_context(
+                symbol=symbol,
+                current_index=current_index,
+                df=df,
+            )
+            signal = self._strategy.generate_signal(context)
 
-            # Process candle via TradingEngine
             await self._engine.process_signal(
                 symbol=symbol,
                 current_price=candle.close,
                 timestamp=candle.timestamp,
+                signal=signal,
             )
 
             # Record equity at this point
@@ -377,32 +377,54 @@ class BacktestEngine:
     ) -> None:
         """Close any open positions at end of backtest.
 
+        Forces an explicit EXIT signal directly through the BacktestExecutor.
+        We bypass TradingEngine here because its PositionTracker is not yet
+        synced with executor-internal state (BacktestExecutor maintains its
+        own positions dict), and risk validation does not apply to a forced
+        end-of-backtest unwind.
+
         Args:
             symbol: Trading symbol.
             current_price: Current market price.
             timestamp: Current timestamp.
         """
+        from cryptrink.execution.base import ExecutionContext
+        from cryptrink.strategies.base import Signal, SignalStrength, SignalType
+
         position = self._executor.get_position(symbol)
         if position is None:
             return
 
-        # Extract position quantity safely
+        side_str = position.get("side")
+        exit_signal_type = SignalType.EXIT_SHORT if side_str == "short" else SignalType.EXIT_LONG
         quantity_str = str(position.get("quantity", "0"))
+        position_size = Decimal(quantity_str)
 
         logger.info(
             "closing_position_at_backtest_end",
             symbol=symbol,
             quantity=quantity_str,
             price=str(current_price),
+            exit_signal=exit_signal_type.value,
         )
 
-        # Close position via TradingEngine
-        # The strategy will generate an exit signal when process_signal is called
-        await self._engine.process_signal(
+        exit_signal = Signal(
+            signal_type=exit_signal_type,
+            symbol=symbol,
+            timestamp=timestamp,
+            price=current_price,
+            strength=SignalStrength.STRONG,
+        )
+        exit_context = ExecutionContext(
             symbol=symbol,
             current_price=current_price,
             timestamp=timestamp,
+            account_balance=self._executor.balance,
+            has_position=True,
+            position_size=position_size,
         )
+
+        await self._executor.execute_signal(exit_signal, exit_context)
 
     async def _calculate_results(
         self,
