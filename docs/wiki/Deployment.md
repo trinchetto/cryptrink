@@ -1,15 +1,117 @@
 # Deployment Guide
 
-This guide covers deployment options for Cryptrink, from local development to production cloud deployment.
+This guide covers deployment options for Cryptrink. The recommended target is
+**Hugging Face Spaces** — the Gradio UI, the live trading loop, and
+(eventually) the LLM-agent strategy all run inside a single Space.
+
+The cloud-VM and Docker sections at the bottom of this document are
+preserved for operators who prefer to run cryptrink on their own
+infrastructure, but they are not the primary deployment path.
 
 ## Deployment Options Comparison
 
 | Option | Pros | Cons | Best For |
 |--------|------|------|----------|
+| **Hugging Face Space — free CPU** | Free, zero ops, three-tab UI | Sleeps when idle, ephemeral DB | Demo, backtests, suggestions |
+| **Hugging Face Space — paid CPU + Storage Bucket** | Always on, persistent `/data`, secrets management | ~$22/mo for CPU Upgrade | Live paper or live trading |
+| **Hugging Face Space — ZeroGPU (PRO account)** | Free GPU per request (25 min/day) | Per-call duration cap | LLM-agent strategy (Phase 9c) |
 | **Local (PC)** | Full control, no latency | Must keep running, power costs | Development, backtesting |
-| **Docker** | Portable, reproducible | Requires Docker knowledge | Any environment |
-| **Cloud VM** | Always on, reliable | Monthly cost | Production trading |
-| **Cloud Run** | Scales to zero, cheap | Cold starts, stateless | Scheduled trading |
+| **Docker / Cloud VM** | Self-hosted, reliable | Manual ops | Operators avoiding HF |
+
+## Hugging Face Spaces Deployment
+
+### 9a — Free CPU Space (demo, backtests, suggestions)
+
+1. Create a Space at <https://huggingface.co/new-space>:
+   - Owner: your HF username
+   - SDK: **Gradio**
+   - Hardware: **CPU basic - free**
+   - Visibility: Private (recommended).
+
+2. Get a write-scoped HF access token:
+   <https://huggingface.co/settings/tokens> → New token → role **Write**.
+
+3. Push the cryptrink branch as the Space's `main`:
+   ```bash
+   git remote add space https://huggingface.co/spaces/<owner>/<space-name>
+   git push space <branch>:main
+   # If the Space already has the auto-init commit, force the first push:
+   #   git push space <branch>:main --force
+   ```
+
+4. Watch **Logs** until the Space switches to **Running**. The
+   front-matter at the top of `README.md` (`sdk: gradio`,
+   `app_file: app.py`, `sdk_version: 6.x`) tells HF how to build it.
+   `requirements.txt` is consumed verbatim — regenerate it whenever
+   `pyproject.toml` changes via:
+   ```bash
+   poetry export --without-hashes --extras web -f requirements.txt -o requirements.txt
+   ```
+
+5. Walk the three tabs in the browser. The DB is ephemeral container
+   disk on this tier — backtests, suggestions, and the live tab fall
+   back to "no historical data" until you populate the DB. That's the
+   expected demo path.
+
+### 9b — Paid CPU Space with persistent storage and live trading
+
+The Live tab needs the process to keep running between requests, and
+SQLite needs to survive Space restarts. Both are satisfied by a paid
+hardware tier plus an attached Storage Bucket.
+
+1. **Upgrade hardware**: Space settings → Hardware → **CPU Upgrade**
+   ($0.03/hr ≈ $22/mo). Paid hardware never sleeps.
+
+2. **Attach a Storage Bucket**:
+   ```bash
+   hf buckets create /<owner>/<space-name>-data
+   ```
+   Then in the Space settings → **Storage Buckets** → attach the bucket
+   at mount path `/data`. The Space gets a persistent read-write `/data`
+   directory; restarts no longer erase the SQLite file.
+
+3. **Set Space variables and secrets** (Space settings → **Variables and
+   secrets**):
+
+   | Name | Type | Required for | Notes |
+   |------|------|--------------|-------|
+   | `DB_URL` | Variable | Persistence | `sqlite+aiosqlite:////data/cryptrink.db` |
+   | `REVOLUTX_API_KEY` | Secret | Live mode | From your Revolut X API console |
+   | `REVOLUTX_PRIVATE_KEY` | Secret | Live mode | Base64-encoded raw 32-byte Ed25519 seed |
+   | `REVOLUTX_PRIVATE_KEY_PATH` | Variable | Live mode (alt) | Use this *or* `REVOLUTX_PRIVATE_KEY`. Path to a PEM file checked into the Space repo. |
+   | `NOTIFY_DISCORD_ENABLED` | Variable | Discord alerts | Set to `true` to enable |
+   | `NOTIFY_DISCORD_WEBHOOK_URL` | Secret | Discord alerts | Discord channel webhook URL |
+   | `CRYPTRINK_DEFAULT_STRATEGY` | Variable | Defaults | e.g. `sma_crossover` |
+   | `CRYPTRINK_SYMBOLS` | Variable | Defaults | JSON list, e.g. `["BTC-EUR"]` |
+
+   Without `REVOLUTX_API_KEY` and a private key, the Live tab still
+   starts but silently falls back to paper mode — the status pane
+   surfaces the fallback so you can confirm the operator's intent.
+
+4. **Restart the Space** (Settings → Factory rebuild) so the new
+   variables are picked up.
+
+5. **Verify**:
+   - Open the Live tab. The strategy dropdown shows the three built-ins.
+   - Pick `paper` mode, click **Start**. The status pane reports
+     "🟢 Running" and increments the iteration counter at your chosen
+     interval. Click **Stop**; status flips to "⏹ Stopped" with a
+     non-null `stopped_at`.
+   - Pick `live` mode (when credentials are configured) and start a
+     loop with a small interval. The status pane shows
+     `Mode: live`. Trade alerts fire to Discord when an order is
+     filled and `NOTIFY_DISCORD_ENABLED=true`.
+
+### Security checklist for live mode
+
+- Never commit `REVOLUTX_PRIVATE_KEY` to the repo. Use HF Secrets.
+- Lock the Space repo: settings → Visibility → **Private**, and
+  restrict collaborators.
+- Set conservative `RISK_*` limits via env vars (e.g.
+  `RISK_MAX_POSITION_SIZE_PCT=0.02`, `RISK_MAX_DAILY_LOSS_PCT=0.01`)
+  before flipping the Mode radio to `live` for the first time.
+- Watch the Status tab and Discord channel for the first few
+  iterations; **Stop** the loop if anything looks wrong.
 
 ## Local Development
 
