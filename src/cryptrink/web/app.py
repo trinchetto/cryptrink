@@ -5,7 +5,7 @@ from __future__ import annotations
 import gradio as gr
 
 from cryptrink.web.state import get_runtime
-from cryptrink.web.tabs import backtest, status, suggest
+from cryptrink.web.tabs import backtest, live, status, suggest
 
 
 def build_demo() -> gr.Blocks:
@@ -20,11 +20,13 @@ def build_demo() -> gr.Blocks:
     with gr.Blocks(title="Cryptrink") as demo:
         gr.Markdown(
             "# Cryptrink\n"
-            "Crypto trading agent for Revolut X — backtests, suggestions, and engine state."
+            "Crypto trading agent for Revolut X — backtests, suggestions, "
+            "live trading, and engine state."
         )
         with gr.Tabs():
             backtest.render()
             suggest.render()
+            live.render()
             status.render()
 
     return demo  # type: ignore[no-any-return]
