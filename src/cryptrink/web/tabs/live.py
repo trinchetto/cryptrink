@@ -215,11 +215,20 @@ def render() -> None:
     default_symbol = runtime.settings.symbols[0] if runtime.settings.symbols else "BTC-EUR"
     creds_present = has_revolutx_credentials(runtime.settings)
     default_mode = LiveMode.PAPER.value
-    cred_hint = (
-        "_Revolut X credentials detected — Live mode will place real orders._"
-        if creds_present
-        else "_No Revolut X credentials in env; Live mode falls back to paper._"
-    )
+    if creds_present:
+        mode_choices = [LiveMode.PAPER.value, LiveMode.LIVE.value]
+        mode_info = "Live mode places real orders on Revolut X."
+        cred_hint = "_Revolut X credentials detected — Live mode will place real orders._"
+    else:
+        # Hide Live entirely when creds are missing. Gradio's Radio doesn't
+        # support per-choice disabling, so omitting is the cleanest way to
+        # convey "not available right now". The info hint explains why.
+        mode_choices = [LiveMode.PAPER.value]
+        mode_info = (
+            "Set REVOLUTX_API_KEY and REVOLUTX_PRIVATE_KEY (or "
+            "REVOLUTX_PRIVATE_KEY_PATH) in the environment to unlock Live mode."
+        )
+        cred_hint = "_No Revolut X credentials in env; Live mode is hidden until they are set._"
 
     with gr.Tab("Live"):
         gr.Markdown(
@@ -241,9 +250,10 @@ def render() -> None:
             interval_input = gr.Number(value=60.0, label="Interval (seconds)", minimum=1)
             balance_input = gr.Number(value=10000.0, label="Initial paper balance (EUR)")
             mode_input = gr.Radio(
-                choices=[LiveMode.PAPER.value, LiveMode.LIVE.value],
+                choices=mode_choices,
                 value=default_mode,
                 label="Mode",
+                info=mode_info,
             )
 
         with gr.Row():
