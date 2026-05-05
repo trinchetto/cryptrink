@@ -396,9 +396,7 @@ class BacktestEngine:
             return
 
         side_str = position.get("side")
-        exit_signal_type = (
-            SignalType.EXIT_SHORT if side_str == "short" else SignalType.EXIT_LONG
-        )
+        exit_signal_type = SignalType.EXIT_SHORT if side_str == "short" else SignalType.EXIT_LONG
         quantity_str = str(position.get("quantity", "0"))
         position_size = Decimal(quantity_str)
 
