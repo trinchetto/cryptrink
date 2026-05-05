@@ -12,17 +12,12 @@ import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from cryptrink import __version__
 from cryptrink.core.config import ExecutionMode, Settings, load_config
 from cryptrink.core.logging import setup_logging
+from cryptrink.runtime import build_session_factory, resolve_strategy
 from cryptrink.strategies import registry as strategy_registry
-from cryptrink.strategies.mean_reversion import (
-    BollingerBandsStrategy,
-    RsiMeanReversionStrategy,
-)
-from cryptrink.strategies.trend_following import SmaCrossoverStrategy
 
 if TYPE_CHECKING:
     from cryptrink.execution.base import BaseExecutor
@@ -36,37 +31,16 @@ app = typer.Typer(
 console = Console()
 
 
-_BUILTIN_STRATEGIES: dict[str, type[BaseStrategy]] = {
-    "sma_crossover": SmaCrossoverStrategy,
-    "rsi_mean_reversion": RsiMeanReversionStrategy,
-    "bollinger_bands": BollingerBandsStrategy,
-}
-
-
-def _ensure_builtins_registered() -> None:
-    """Register built-in strategies in the global registry if not already present."""
-    for name, factory in _BUILTIN_STRATEGIES.items():
-        if not strategy_registry.get_registry().is_registered(name):
-            strategy_registry.register(name, factory)
-
-
 def _build_strategy(name: str) -> BaseStrategy:
-    """Resolve a strategy name to an instance using default parameters."""
-    _ensure_builtins_registered()
+    """Resolve a strategy name, exiting via typer on unknown names."""
     try:
-        return strategy_registry.create(name)
+        return resolve_strategy(name)
     except KeyError:
         available = ", ".join(strategy_registry.list_strategies()) or "(none)"
         console.print(
             f"[red]Unknown strategy '{name}'.[/red] Available: {available}",
         )
         raise typer.Exit(code=1) from None
-
-
-def _build_session_factory(db_url: str) -> async_sessionmaker[AsyncSession]:
-    """Create an async SQLAlchemy session factory for the given URL."""
-    engine = create_async_engine(db_url)
-    return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
 def version_callback(value: bool) -> None:
@@ -129,7 +103,7 @@ async def _run_async(
         console.print(f"[red]Unsupported execution mode for run: {mode.value}[/red]")
         raise typer.Exit(code=2)
 
-    session_factory = _build_session_factory(config.database.url)
+    session_factory = build_session_factory(config.database.url)
 
     db_engine = session_factory.kw["bind"]
     async with db_engine.begin() as conn:
@@ -223,7 +197,7 @@ async def _backtest_async(
 
     strategy = _build_strategy(strategy_name)
 
-    session_factory = _build_session_factory(config.database.url)
+    session_factory = build_session_factory(config.database.url)
     db_engine = session_factory.kw["bind"]
     async with db_engine.begin() as conn:
         await conn.run_sync(OHLCVModel.metadata.create_all)
@@ -339,7 +313,7 @@ async def _suggest_async(
 
     strategy = _build_strategy(strategy_name)
 
-    session_factory = _build_session_factory(config.database.url)
+    session_factory = build_session_factory(config.database.url)
     db_engine = session_factory.kw["bind"]
     async with db_engine.begin() as conn:
         await conn.run_sync(OHLCVModel.metadata.create_all)
