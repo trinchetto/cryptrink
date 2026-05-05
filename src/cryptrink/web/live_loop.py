@@ -27,7 +27,7 @@ from cryptrink.strategies.base import SignalType, StrategyContext
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from cryptrink.data.feed import HistoricalDataFeed
+    from cryptrink.data.feed import BaseDataFeed
     from cryptrink.execution.base import ExecutionResult
     from cryptrink.execution.engine import TradingEngine
     from cryptrink.strategies.base import BaseStrategy, Signal
@@ -105,9 +105,10 @@ class LiveLoop:
         engine: TradingEngine,
         strategy: BaseStrategy,
         symbol: str,
-        data_feed: HistoricalDataFeed,
+        data_feed: BaseDataFeed,
         interval_seconds: float = 60.0,
         on_signal: Callable[[Signal, ExecutionResult], Awaitable[None]] | None = None,
+        on_stop: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         if interval_seconds <= 0:
             msg = f"interval_seconds must be positive, got {interval_seconds}"
@@ -119,6 +120,7 @@ class LiveLoop:
         self._data_feed = data_feed
         self._interval_seconds = interval_seconds
         self._on_signal = on_signal
+        self._on_stop = on_stop
 
         self._stop_event = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
@@ -150,7 +152,14 @@ class LiveLoop:
         )
 
     async def stop(self) -> None:
-        """Signal the loop to exit and await termination. Idempotent."""
+        """Signal the loop to exit and await termination. Idempotent.
+
+        After the background task has joined, the optional ``on_stop``
+        callback runs so callers can release exchange clients, close
+        notifier sessions, etc. Callback failures are logged but never
+        propagated — :meth:`stop` always returns cleanly so the UI can
+        re-enable controls.
+        """
         if self._task is None:
             self._state.running = False
             return
@@ -164,6 +173,13 @@ class LiveLoop:
             self._task = None
             self._state.running = False
             self._state.stopped_at = datetime.now(UTC)
+
+        if self._on_stop is not None:
+            try:
+                await self._on_stop()
+            except Exception:
+                logger.exception("live_loop_on_stop_failed", symbol=self._symbol)
+
         logger.info(
             "live_loop_stopped",
             symbol=self._symbol,

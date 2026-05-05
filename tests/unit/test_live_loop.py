@@ -251,6 +251,51 @@ class TestActiveLoopRegistry:
         assert get_active_loop() is None
 
 
+class TestStopCallback:
+    async def test_on_stop_runs_after_task_joins(self) -> None:
+        on_stop = AsyncMock()
+        loop = LiveLoop(
+            engine=_make_engine(),
+            strategy=_make_strategy(),
+            symbol="BTC-EUR",
+            data_feed=_make_data_feed(),
+            interval_seconds=60,
+            on_stop=on_stop,
+        )
+        await loop.start()
+        await loop.stop()
+        on_stop.assert_awaited_once()
+
+    async def test_on_stop_exception_does_not_break_stop(self) -> None:
+        async def failing_stop() -> None:
+            raise RuntimeError("cleanup boom")
+
+        loop = LiveLoop(
+            engine=_make_engine(),
+            strategy=_make_strategy(),
+            symbol="BTC-EUR",
+            data_feed=_make_data_feed(),
+            interval_seconds=60,
+            on_stop=failing_stop,
+        )
+        await loop.start()
+        await loop.stop()  # must not raise
+        assert not loop.is_running
+
+    async def test_on_stop_skipped_when_never_started(self) -> None:
+        on_stop = AsyncMock()
+        loop = LiveLoop(
+            engine=_make_engine(),
+            strategy=_make_strategy(),
+            symbol="BTC-EUR",
+            data_feed=_make_data_feed(),
+            interval_seconds=60,
+            on_stop=on_stop,
+        )
+        await loop.stop()
+        on_stop.assert_not_awaited()
+
+
 class TestSignalCallback:
     async def test_callback_receives_signal_and_result(self) -> None:
         observed: list[tuple[Signal, ExecutionResult]] = []

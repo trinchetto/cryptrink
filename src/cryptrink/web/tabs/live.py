@@ -1,33 +1,61 @@
 """Live tab for the Cryptrink Gradio web app.
 
-Drives a strategy on a periodic interval via :class:`LiveLoop`. The tab
-is paper-mode by default — every Start click instantiates a fresh
-:class:`PaperExecutor` against the configured database. Switching to a
-live exchange happens in a follow-up that wires :class:`LiveExecutor`
-behind the same Start button when ``REVOLUTX_API_KEY`` is present.
+Drives a strategy on a periodic interval via :class:`LiveLoop`. Mode is
+selectable: paper (default) uses :class:`PaperExecutor` against the
+historical OHLCV in the configured database; live builds a
+:class:`LiveExecutor` against :class:`RevolutXExchange` when
+``REVOLUTX_API_KEY`` plus a private key are present, and silently falls
+back to paper otherwise so the Start button never accidentally turns
+into real-money trading.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 import gradio as gr
 
 from cryptrink.cli.utils import init_db_schema
-from cryptrink.data.feed import HistoricalDataFeed
-from cryptrink.data.storage import OHLCVRepository
-from cryptrink.execution.engine import TradingEngine
-from cryptrink.execution.paper import PaperExecutor
 from cryptrink.runtime import resolve_strategy
 from cryptrink.strategies import registry as strategy_registry
-from cryptrink.web.live_loop import (
-    LiveLoop,
-    LiveLoopState,
-    get_active_loop,
-    set_active_loop,
-)
+from cryptrink.strategies.base import SignalType
+from cryptrink.web.live_loop import LiveLoop, LiveLoopState, get_active_loop, set_active_loop
+from cryptrink.web.live_setup import LiveMode, build_live_components, has_revolutx_credentials
 from cryptrink.web.state import get_runtime
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from cryptrink.execution.base import ExecutionResult
+    from cryptrink.execution.repository import OrderRepository
+    from cryptrink.notifications.discord import DiscordNotifier
+    from cryptrink.strategies.base import Signal
+
+
+def _build_discord_callback(
+    notifier: DiscordNotifier,
+    order_repo: OrderRepository,
+) -> Callable[[Signal, ExecutionResult], Awaitable[None]]:
+    """Wrap the discord notifier in an on_signal-shaped callback.
+
+    Only successful executions that produced an ``order_id`` actually fire
+    a Discord embed. HOLD signals and rejected executions are skipped
+    silently — they're already visible in the loop's status pane.
+    """
+
+    async def callback(signal: Signal, result: ExecutionResult) -> None:
+        if signal.signal_type == SignalType.HOLD:
+            return
+        if not result.success or result.order_id is None:
+            return
+        order = await order_repo.get_by_order_id(result.order_id)
+        if order is None:
+            return
+        await notifier.send_trade_notification(order)
+
+    return callback
 
 
 async def start_loop(
@@ -35,6 +63,7 @@ async def start_loop(
     symbol: str,
     interval_seconds: float,
     initial_balance: float,
+    mode_value: str,
 ) -> str:
     """Build a fresh :class:`LiveLoop` and start it. Used by the Start button."""
     if not strategy_name:
@@ -43,6 +72,11 @@ async def start_loop(
         raise gr.Error("Enter a symbol.")
     if interval_seconds <= 0:
         raise gr.Error("Interval must be positive.")
+
+    try:
+        requested_mode = LiveMode(mode_value)
+    except ValueError as exc:
+        raise gr.Error(f"Unknown mode '{mode_value}'.") from exc
 
     existing = get_active_loop()
     if existing is not None and existing.is_running:
@@ -57,30 +91,41 @@ async def start_loop(
     session_factory = runtime.session_factory
     await init_db_schema(session_factory)
 
-    repository = OHLCVRepository(session_factory)
-    data_feed = HistoricalDataFeed(repository)
-
-    executor = PaperExecutor(initial_balance=Decimal(str(initial_balance)))
-    engine = TradingEngine(
-        strategy=strategy,
-        executor=executor,
+    components = await build_live_components(
+        settings=runtime.settings,
         session_factory=session_factory,
+        strategy=strategy,
+        requested_mode=requested_mode,
         initial_balance=Decimal(str(initial_balance)),
-        risk_settings=runtime.settings.risk,
     )
-    await engine.start()
+
+    on_signal = None
+    if components.notifier is not None:
+        from cryptrink.execution.repository import OrderRepository
+
+        on_signal = _build_discord_callback(
+            notifier=components.notifier,
+            order_repo=OrderRepository(session_factory),
+        )
 
     loop = LiveLoop(
-        engine=engine,
+        engine=components.engine,
         strategy=strategy,
         symbol=symbol,
-        data_feed=data_feed,
+        data_feed=components.data_feed,
         interval_seconds=float(interval_seconds),
+        on_signal=on_signal,
+        on_stop=components.cleanup,
     )
     set_active_loop(loop)
     await loop.start()
 
-    return _render_status(loop.snapshot(), engine_id=engine.engine_id)
+    return _render_status(
+        loop.snapshot(),
+        engine_id=components.engine.engine_id,
+        mode=components.mode,
+        requested_mode=requested_mode,
+    )
 
 
 async def stop_loop() -> str:
@@ -100,7 +145,13 @@ def refresh_status() -> str:
     return _render_status(loop.snapshot())
 
 
-def _render_status(state: LiveLoopState | None, *, engine_id: str | None = None) -> str:
+def _render_status(
+    state: LiveLoopState | None,
+    *,
+    engine_id: str | None = None,
+    mode: LiveMode | None = None,
+    requested_mode: LiveMode | None = None,
+) -> str:
     """Format a :class:`LiveLoopState` into a markdown status block."""
     if state is None:
         return "_No live loop has been started._"
@@ -111,6 +162,18 @@ def _render_status(state: LiveLoopState | None, *, engine_id: str | None = None)
         ("Strategy", state.strategy_name or "—"),
         ("Interval", f"{state.interval_seconds:.0f}s"),
     ]
+    if mode is not None:
+        if requested_mode is not None and requested_mode != mode:
+            rows.append(
+                (
+                    "Mode",
+                    f"**{mode.value}** "
+                    f"(requested {requested_mode.value} — credentials missing, "
+                    "fell back to paper)",
+                )
+            )
+        else:
+            rows.append(("Mode", mode.value))
     if engine_id is not None:
         rows.append(("Engine ID", f"`{engine_id}`"))
     if state.started_at is not None:
@@ -150,14 +213,22 @@ def render() -> None:
         else (strategy_options[0] if strategy_options else None)
     )
     default_symbol = runtime.settings.symbols[0] if runtime.settings.symbols else "BTC-EUR"
+    creds_present = has_revolutx_credentials(runtime.settings)
+    default_mode = LiveMode.PAPER.value
+    cred_hint = (
+        "_Revolut X credentials detected — Live mode will place real orders._"
+        if creds_present
+        else "_No Revolut X credentials in env; Live mode falls back to paper._"
+    )
 
     with gr.Tab("Live"):
         gr.Markdown(
             "Run a strategy on a periodic interval. Each tick fetches the latest "
-            "candle from the configured database, generates a signal, and routes it "
-            "through risk validation and a **paper** executor. No real orders are "
-            "placed. Live exchange wiring (Revolut X) lands in a follow-up commit on "
-            "this branch."
+            "candle, generates a signal, and routes it through risk validation and "
+            "the configured executor. **Paper** mode replays signals against the "
+            "stored OHLCV in the configured database; **Live** mode places real "
+            "orders on Revolut X (requires REVOLUTX_API_KEY + REVOLUTX_PRIVATE_KEY "
+            "in the environment).\n\n" + cred_hint
         )
         with gr.Row():
             strategy_input = gr.Dropdown(
@@ -169,6 +240,11 @@ def render() -> None:
         with gr.Row():
             interval_input = gr.Number(value=60.0, label="Interval (seconds)", minimum=1)
             balance_input = gr.Number(value=10000.0, label="Initial paper balance (EUR)")
+            mode_input = gr.Radio(
+                choices=[LiveMode.PAPER.value, LiveMode.LIVE.value],
+                value=default_mode,
+                label="Mode",
+            )
 
         with gr.Row():
             start_btn = gr.Button("Start", variant="primary")
@@ -179,7 +255,7 @@ def render() -> None:
 
         start_btn.click(
             fn=start_loop,
-            inputs=[strategy_input, symbol_input, interval_input, balance_input],
+            inputs=[strategy_input, symbol_input, interval_input, balance_input, mode_input],
             outputs=[status_output],
         )
         stop_btn.click(fn=stop_loop, inputs=[], outputs=[status_output])
