@@ -268,9 +268,8 @@ class TestBacktestEngineBasicFlow:
 class TestBacktestEngineWithTrades:
     """Tests for backtest with actual trading.
 
-    Note: Currently limited by TradingEngine generating HOLD signals internally.
-    These tests verify the infrastructure works, but actual strategy signals
-    won't be executed until TradingEngine integration is complete.
+    Strategy signals are now routed from BacktestEngine into TradingEngine,
+    so these tests assert that trades actually execute end-to-end.
     """
 
     @pytest.mark.asyncio
@@ -295,10 +294,14 @@ class TestBacktestEngineWithTrades:
         assert result.strategy_name == "SimpleBuyHoldStrategy"
         assert result.initial_balance == Decimal("10000")
 
-        # TODO: Once TradingEngine supports strategy signals, verify:
-        # - At least 1 trade was executed
-        # - Balance changed from initial
-        # - Position was opened and closed
+        # Strategy signals are now executed: SimpleBuyHoldStrategy emits an
+        # ENTRY_LONG on the first in-window candle, the executor opens a
+        # position, and end-of-backtest forces it closed -- so the ending
+        # balance must differ from the initial deposit.
+        # NOTE: result.metrics.total_trades is read from the engine's
+        # PositionTracker, which BacktestExecutor does not yet sync to;
+        # ending_equity is the unambiguous signal that trades executed.
+        assert result.metrics.ending_equity != Decimal("10000")
 
 
 class TestBacktestEngineMetrics:
