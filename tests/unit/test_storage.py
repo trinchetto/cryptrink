@@ -96,7 +96,7 @@ class TestOHLCVModel:
             volume="150.25",
         )
 
-        dt = ohlcv.datetime
+        dt = ohlcv.timestamp_datetime
         assert dt == datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC)
         assert dt.year == 2024
         assert dt.month == 1

@@ -1,0 +1,30 @@
+"""Hugging Face Space entrypoint.
+
+This file lives at the repository root because the HF Spaces Gradio SDK looks
+for ``app.py`` by default. It defers all wiring to
+:func:`cryptrink.web.app.build_demo`.
+
+HF Spaces only runs ``pip install -r requirements.txt`` before launching the
+app — it doesn't ``pip install .`` the project. We use a src-layout
+(``src/cryptrink/...``), so we prepend ``src/`` to ``sys.path`` here to make
+the package importable inside the Space. Locally, ``poetry install`` makes
+cryptrink importable via the venv's site-packages; the sys.path entry is
+then redundant but harmless.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+_SRC = Path(__file__).resolve().parent / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
+from cryptrink.web.app import build_demo  # noqa: E402
+
+demo = build_demo()
+
+
+if __name__ == "__main__":
+    demo.launch()

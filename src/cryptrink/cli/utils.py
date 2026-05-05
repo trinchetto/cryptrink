@@ -5,12 +5,14 @@ from collections.abc import Coroutine
 from decimal import Decimal
 from typing import TypeVar
 
+import typer
 from rich.console import Console
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from cryptrink.core.config import Settings
 from cryptrink.data.feed import HistoricalDataFeed
-from cryptrink.data.storage import OHLCVRepository
+from cryptrink.data.storage import Base, OHLCVRepository
+from cryptrink.runtime import ensure_builtins_registered
 from cryptrink.strategies import registry as strategy_registry
 from cryptrink.strategies.base import BaseStrategy
 
@@ -36,6 +38,10 @@ def run_async[T](coro: Coroutine[None, None, T]) -> T:
     except KeyboardInterrupt:
         console.print("\n[yellow]Operation cancelled by user.[/yellow]")
         raise SystemExit(0) from None
+    except typer.Exit:
+        # Commands raise typer.Exit themselves after printing their own
+        # diagnostics; don't double-decorate it as an unhandled error.
+        raise
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
         raise
@@ -62,8 +68,28 @@ def create_session_factory(config: Settings) -> async_sessionmaker[AsyncSession]
     )
 
 
+async def init_db_schema(session_factory: async_sessionmaker[AsyncSession]) -> None:
+    """Create every Cryptrink table if missing.
+
+    Idempotent (``CREATE TABLE IF NOT EXISTS``). Run this once per command
+    after :func:`create_session_factory` so a fresh sqlite file or HF Space
+    boot doesn't crash with ``no such table`` on the first query.
+    """
+    # Import for side effect: registers Order/Position/Trade/EngineState
+    # mappers against the shared ``Base.metadata`` so create_all() emits
+    # every table, not just OHLCV.
+    import cryptrink.execution.models  # noqa: F401
+
+    db_engine = session_factory.kw["bind"]
+    async with db_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+
 def load_strategy(strategy_name: str, **params: object) -> BaseStrategy:
     """Load strategy from registry.
+
+    Built-in strategies are registered lazily on first call so the CLI works
+    without needing a separate import-side-effect bootstrap step.
 
     Args:
         strategy_name: Name of strategy (e.g., "sma_crossover").
@@ -75,6 +101,7 @@ def load_strategy(strategy_name: str, **params: object) -> BaseStrategy:
     Raises:
         ValueError: If strategy not found.
     """
+    ensure_builtins_registered()
     try:
         return strategy_registry.create(strategy_name, **params)
     except KeyError:

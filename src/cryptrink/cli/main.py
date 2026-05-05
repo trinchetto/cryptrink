@@ -74,7 +74,12 @@ def run(
     import json
     from decimal import Decimal
 
-    from cryptrink.cli.utils import create_session_factory, load_strategy, run_async
+    from cryptrink.cli.utils import (
+        create_session_factory,
+        init_db_schema,
+        load_strategy,
+        run_async,
+    )
     from cryptrink.execution.engine import TradingEngine
     from cryptrink.execution.paper import PaperExecutor
     from cryptrink.notifications.discord import DiscordNotifier
@@ -129,6 +134,7 @@ def run(
 
         # Create session factory
         session_factory = create_session_factory(config)
+        await init_db_schema(session_factory)
 
         # Create executor
         if config.execution_mode == ExecutionMode.PAPER:
@@ -229,6 +235,7 @@ def backtest(
     from cryptrink.cli.utils import (
         create_data_feed,
         create_session_factory,
+        init_db_schema,
         load_strategy,
         run_async,
     )
@@ -278,6 +285,7 @@ def backtest(
 
         # Create session factory and data feed
         session_factory = create_session_factory(config)
+        await init_db_schema(session_factory)
         data_feed = create_data_feed(config, session_factory)
 
         # Create backtest engine
@@ -291,12 +299,20 @@ def backtest(
 
         # Run backtest
         console.print("[yellow]Running backtest...[/yellow]")
-        result = await engine.run(
-            symbol=symbol,
-            start_time=start_time,
-            end_time=end_time,
-            timeframe=strat.timeframe,
-        )
+        try:
+            result = await engine.run(
+                symbol=symbol,
+                start_time=start_time,
+                end_time=end_time,
+                timeframe=strat.timeframe,
+            )
+        except ValueError as exc:
+            console.print(f"[red]Backtest failed: {exc}[/red]")
+            console.print(
+                "[dim]Tip: ensure historical OHLCV data has been loaded into "
+                f"{config.database.url} for the requested symbol/timeframe.[/dim]"
+            )
+            raise typer.Exit(code=1) from exc
 
         # Display results
         console.print("\n")
@@ -355,6 +371,7 @@ def suggest(
     from cryptrink.cli.utils import (
         create_data_feed,
         create_session_factory,
+        init_db_schema,
         load_strategy,
         run_async,
     )
@@ -394,6 +411,7 @@ def suggest(
 
         # Create data feed
         session_factory = create_session_factory(config)
+        await init_db_schema(session_factory)
         data_feed = create_data_feed(config, session_factory)
 
         # Fetch recent OHLCV data
@@ -487,7 +505,7 @@ def status(
     from sqlalchemy import select
 
     from cryptrink.cli.formatters import format_engine_status_panel, format_trade_history_table
-    from cryptrink.cli.utils import create_session_factory, run_async
+    from cryptrink.cli.utils import create_session_factory, init_db_schema, run_async
     from cryptrink.execution.models import EngineState, Position
 
     setup_logging()
@@ -495,6 +513,7 @@ def status(
 
     async def query_status() -> None:
         session_factory = create_session_factory(config)
+        await init_db_schema(session_factory)
 
         async with session_factory() as session:
             # Query engine state
@@ -586,7 +605,7 @@ def history(
     from sqlalchemy import select
 
     from cryptrink.cli.formatters import format_order_history_table, format_trade_history_table
-    from cryptrink.cli.utils import create_session_factory, run_async
+    from cryptrink.cli.utils import create_session_factory, init_db_schema, run_async
     from cryptrink.execution.models import Order, Position
 
     setup_logging()
@@ -594,6 +613,7 @@ def history(
 
     async def query_history() -> None:
         session_factory = create_session_factory(config)
+        await init_db_schema(session_factory)
 
         async with session_factory() as session:
             if show_orders:

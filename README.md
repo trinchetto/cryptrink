@@ -1,3 +1,16 @@
+---
+title: Cryptrink
+emoji: 📈
+colorFrom: blue
+colorTo: indigo
+sdk: gradio
+sdk_version: 6.14.0
+python_version: "3.13"
+app_file: app.py
+pinned: false
+license: mit
+---
+
 # Cryptrink
 
 ![CI](https://github.com/trinchetto/cryptrink/actions/workflows/ci.yml/badge.svg)

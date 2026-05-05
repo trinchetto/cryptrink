@@ -91,8 +91,16 @@ class OHLCV(Base):
         return Decimal(self.volume)
 
     @property
-    def datetime(self) -> datetime:
-        """Get timestamp as datetime object."""
+    def timestamp_datetime(self) -> datetime:
+        """Get timestamp as datetime object.
+
+        Note: this is named ``timestamp_datetime`` rather than ``datetime`` to
+        avoid shadowing the imported :class:`datetime.datetime` symbol in the
+        class scope. Python 3.14's lazy annotation evaluation (PEP 649)
+        resolves ``Mapped[datetime]`` against the class namespace first; a
+        property called ``datetime`` would mask the type and break SQLAlchemy
+        column declaration.
+        """
         return datetime.fromtimestamp(self.timestamp / 1000.0, tz=UTC)
 
 
