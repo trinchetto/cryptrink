@@ -67,14 +67,14 @@ discord = [
     "discord.py>=2.4,<3.0",
 ]
 web = [
-    "gradio>=5.0,<6.0",
+    "gradio>=5.30,<7.0",
     # gradio's CLI subpackage imports `requests` eagerly during `import gradio`;
     # not declaring it here breaks app.py on a clean install.
     "requests>=2.32,<3.0",
 ]
 all = [
     "discord.py>=2.4,<3.0",
-    "gradio>=5.0,<6.0",
+    "gradio>=5.30,<7.0",
     "requests>=2.32,<3.0",
 ]
 
