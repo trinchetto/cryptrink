@@ -11,6 +11,7 @@ into real-money trading.
 
 from __future__ import annotations
 
+import contextlib
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
@@ -203,6 +204,91 @@ def _render_status(
     )
 
 
+async def test_connection(symbol: str) -> str:
+    """Probe Revolut X with a read-only ticker + balances call.
+
+    Wired to the Test connection button. Builds a one-shot
+    :class:`RevolutXExchange`, connects, fetches the ticker for the
+    operator-supplied symbol and the account balances, then closes the
+    connection. **No orders are placed.**
+
+    Catches both signing/connection errors and per-call API errors so
+    each failure surfaces in the UI as a friendly :class:`gr.Error` with
+    the underlying message instead of a server-side traceback.
+    """
+    if not symbol:
+        raise gr.Error("Enter a symbol to probe (e.g. BTC-EUR).")
+
+    runtime = get_runtime()
+    if not has_revolutx_credentials(runtime.settings):
+        raise gr.Error(
+            "Revolut X credentials are not configured. Set REVOLUTX_API_KEY "
+            "and REVOLUTX_PRIVATE_KEY (or REVOLUTX_PRIVATE_KEY_PATH) and "
+            "rebuild the Space."
+        )
+
+    from cryptrink.exchange.revolutx import RevolutXExchange
+
+    revolutx = runtime.settings.revolutx
+    try:
+        private_key_b64 = revolutx.get_private_key()
+    except ValueError as exc:
+        raise gr.Error(f"Failed to load private key: {exc}") from exc
+
+    exchange = RevolutXExchange(
+        api_key=revolutx.api_key.get_secret_value(),
+        private_key_base64=private_key_b64,
+        base_url=revolutx.base_url,
+    )
+
+    try:
+        try:
+            await exchange.connect()
+        except Exception as exc:
+            raise gr.Error(f"Connect failed: {type(exc).__name__}: {exc}") from exc
+
+        try:
+            ticker = await exchange.get_ticker(symbol)
+        except Exception as exc:
+            raise gr.Error(f"get_ticker({symbol}) failed: {type(exc).__name__}: {exc}") from exc
+
+        balance_summary: str
+        try:
+            balances = await exchange.get_balances()
+        except Exception as exc:
+            balance_summary = f"_get_balances failed: {type(exc).__name__}: {exc}_"
+        else:
+            non_zero = {ccy: bal for ccy, bal in balances.items() if (bal.total or 0) > 0}
+            if not non_zero:
+                balance_summary = "_All balances are zero (no funds in account)._"
+            else:
+                lines = [
+                    f"- **{ccy}**: total={bal.total} available={bal.available}"
+                    for ccy, bal in sorted(non_zero.items())
+                ]
+                balance_summary = "\n".join(lines)
+    finally:
+        with contextlib.suppress(Exception):
+            await exchange.close()
+
+    rows: list[tuple[str, str]] = [
+        ("Probed at", datetime.now(UTC).isoformat(timespec="seconds")),
+        ("Symbol", ticker.symbol),
+        ("Last", str(ticker.last)),
+        ("Bid", str(ticker.bid)),
+        ("Ask", str(ticker.ask)),
+        ("24h volume", str(ticker.volume_24h)),
+    ]
+    table = "\n".join(f"| {label} | {value} |" for label, value in rows)
+    return (
+        "**Connection OK — no order was placed.**\n\n"
+        "| Field | Value |\n| --- | --- |\n"
+        f"{table}\n\n"
+        "**Account balances**\n\n"
+        f"{balance_summary}"
+    )
+
+
 def render() -> None:
     """Render the Live tab UI inside an enclosing :class:`gr.Tabs`."""
     runtime = get_runtime()
@@ -270,3 +356,25 @@ def render() -> None:
         )
         stop_btn.click(fn=stop_loop, inputs=[], outputs=[status_output])
         refresh_btn.click(fn=refresh_status, inputs=[], outputs=[status_output])
+
+        if creds_present:
+            gr.Markdown(
+                "---\n\n"
+                "### Test live connection\n"
+                "Probe Revolut X with a read-only ticker + account-balance "
+                "call. **No orders are placed.** Run this once after adding "
+                "credentials to confirm signing and authentication work."
+            )
+            with gr.Row():
+                test_symbol_input = gr.Textbox(
+                    value=default_symbol,
+                    label="Probe symbol",
+                    scale=2,
+                )
+                test_btn = gr.Button("Test live connection", variant="secondary")
+            test_output = gr.Markdown()
+            test_btn.click(
+                fn=test_connection,
+                inputs=[test_symbol_input],
+                outputs=[test_output],
+            )
