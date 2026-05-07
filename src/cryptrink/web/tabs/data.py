@@ -56,6 +56,22 @@ _WIPE_CONFIRM_JS = """
 }
 """
 
+# Reset is more destructive than wipe (entire DB file gone, not just
+# one (symbol, timeframe) group), so the prompt is more emphatic.
+_RESET_CONFIRM_JS = """
+() => {
+  const msg = 'DELETE THE ENTIRE DATABASE FILE?\\n\\n'
+            + 'Every stored OHLCV row will be permanently removed. '
+            + 'Use this only if the database is corrupted '
+            + '("database disk image is malformed") or you genuinely '
+            + 'want to start from scratch.\\n\\nThis cannot be undone.';
+  if (!confirm(msg)) {
+    throw new Error('reset cancelled by user');
+  }
+  return [];
+}
+"""
+
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
@@ -519,6 +535,63 @@ async def db_diagnostics() -> str:
     return _emit(f"diagnostics: COMPLETE in {_format_elapsed(started)}")
 
 
+async def reset_database() -> str:
+    """Delete the SQLite file and reinitialise the schema from scratch.
+
+    Last-resort recovery for ``database disk image is malformed`` —
+    SQLite cannot recover internally once a page is bad, so we close
+    the engine, remove the main ``.db`` file plus any sidecars
+    (``.db-journal``/``.db-wal``/``.db-shm``), then ask cryptrink to
+    re-create the schema. The next backfill writes a fresh file.
+
+    Only supports sqlite URLs. For non-file backends this returns a
+    failure message rather than silently no-opping.
+    """
+    runtime = get_runtime()
+    db_url = runtime.settings.database.url
+    path = _sqlite_file_path(db_url)
+
+    if path is None:
+        return _emit_failure(
+            f"reset: db url {db_url} is not a sqlite file (not implemented for "
+            "non-sqlite backends — drop tables manually instead)"
+        )
+
+    _emit(f"reset: starting — target file is `{path}`")
+    started = time.perf_counter()
+
+    # Step 1: dispose the engine so SQLite releases the file handle.
+    # flush_runtime also rebuilds session_factory; we'll re-init schema
+    # against the fresh factory in step 3.
+    await flush_runtime()
+    _emit("reset: engine disposed (file handles released)")
+
+    # Step 2: remove the main file plus every sidecar.
+    removed: list[str] = []
+    for suffix in ("", "-journal", "-wal", "-shm"):
+        sidecar = Path(str(path) + suffix)
+        if sidecar.exists():  # noqa: ASYNC240
+            try:
+                sidecar.unlink()  # noqa: ASYNC240
+                removed.append(sidecar.name)
+            except OSError as exc:
+                return _emit_failure(f"reset: failed to remove {sidecar.name}", exc)
+    if removed:
+        _emit(f"reset: removed {', '.join(removed)}")
+    else:
+        _emit("reset: nothing to remove (the file did not exist)")
+
+    # Step 3: re-create the schema on the fresh factory.
+    runtime = get_runtime()
+    await init_db_schema(runtime.session_factory)
+    _emit("reset: fresh schema initialised")
+
+    return _emit(
+        f"reset: COMPLETE in {_format_elapsed(started)} "
+        f"({_format_db_size(runtime.settings.database.url)})"
+    )
+
+
 async def force_checkpoint() -> str:
     """Force-flush any pending SQLite state to the main .db file.
 
@@ -702,6 +775,7 @@ def render() -> None:
             diagnostics_btn = gr.Button("DB diagnostics")
             checkpoint_btn = gr.Button("Force checkpoint")
             wipe_btn = gr.Button("Wipe (with confirm)", variant="stop")
+            reset_btn = gr.Button("Reset database (corruption recovery)", variant="stop")
             clear_btn = gr.Button("Clear log")
 
         terminal = gr.Markdown(value=_render_terminal(), label="Terminal")
@@ -731,3 +805,9 @@ def render() -> None:
         clear_btn.click(fn=clear_log, inputs=[], outputs=[terminal])
         diagnostics_btn.click(fn=db_diagnostics, inputs=[], outputs=[terminal])
         checkpoint_btn.click(fn=force_checkpoint, inputs=[], outputs=[terminal])
+        reset_btn.click(
+            fn=reset_database,
+            inputs=[],
+            outputs=[terminal],
+            js=_RESET_CONFIRM_JS,
+        )

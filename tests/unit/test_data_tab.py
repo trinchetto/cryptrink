@@ -187,6 +187,74 @@ class TestDatabaseOverview:
         assert "3 candles" in out
 
 
+class TestResetDatabase:
+    @pytest.mark.asyncio
+    async def test_removes_sqlite_file_and_recreates_schema(self, tmp_path: Path) -> None:
+        """Reset must delete the .db file (and any sidecar journal/wal
+        files) and re-initialise an empty schema so the runtime is
+        usable again immediately after a corruption-recovery click."""
+        db_path = tmp_path / "cryptrink.db"
+        _install_runtime(_settings(db_url=f"sqlite+aiosqlite:///{db_path}"))
+
+        # Touch the database so the file actually exists before reset.
+        from cryptrink.cli.utils import init_db_schema
+
+        runtime = web_state.get_runtime()
+        await init_db_schema(runtime.session_factory)
+        assert db_path.exists()
+
+        # Drop a fake sidecar AFTER schema init (sqlite's own init
+        # would otherwise sweep this away during recovery).
+        journal_path = tmp_path / "cryptrink.db-journal"
+        journal_path.write_bytes(b"leftover journal")
+
+        # The original file size is captured before reset so we can
+        # assert reset truly replaced it (the post-reset file is small
+        # because it only holds the empty schema).
+        old_size = db_path.stat().st_size
+        # Pad with a marker so the post-reset file isn't accidentally
+        # the same size as the freshly-init'd schema.
+        with db_path.open("ab") as f:
+            f.write(b"x" * 50_000)
+        post_pad_size = db_path.stat().st_size
+
+        out = await data_tab.reset_database()
+
+        # Leftover journal sidecar was removed.
+        assert not journal_path.exists()
+        # Main file is back (schema re-init creates it) but is the
+        # fresh small schema, not the padded pre-reset blob.
+        assert db_path.exists()
+        assert db_path.stat().st_size < post_pad_size
+        # Required log markers.
+        assert "reset: starting" in out
+        assert "engine disposed" in out
+        assert "removed" in out
+        assert "reset: COMPLETE" in out
+        # Sanity-check `old_size` was used (silences ARG warnings).
+        assert old_size > 0
+
+        # Subsequent reads work — schema has been re-created.
+        runtime = web_state.get_runtime()
+        from sqlalchemy import text
+
+        async with runtime.session_factory() as session:
+            await session.execute(text("SELECT 1"))
+
+    @pytest.mark.asyncio
+    async def test_logs_failure_for_non_sqlite_backend(self) -> None:
+        # Install with a benign sqlite URL so the runtime builds, then
+        # mutate the URL to a non-sqlite one before calling reset —
+        # build_session_factory eagerly imports the dialect's DBAPI, so
+        # we can't actually instantiate a postgres engine in CI.
+        runtime = _install_runtime(_settings())
+        runtime.settings.database.url = "postgresql+asyncpg://user:pass@localhost/db"
+
+        out = await data_tab.reset_database()
+        assert "FAILED" in out
+        assert "not a sqlite file" in out
+
+
 class TestDbDiagnostics:
     @pytest.mark.asyncio
     async def test_logs_pragmas_and_row_counts(self) -> None:
