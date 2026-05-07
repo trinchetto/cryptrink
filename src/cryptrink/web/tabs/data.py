@@ -390,6 +390,17 @@ async def wipe(symbol: str, timeframe: str) -> str:
     # the FUSE mount can replicate the deletion.
     await flush_runtime()
 
+    if deleted == 0:
+        # Almost always a (symbol, timeframe) mismatch — operator left
+        # the timeframe dropdown on its default and clicked Wipe.
+        # Log loudly so the mismatch is obvious without scrolling up.
+        return _emit(
+            f"wipe: COMPLETE — NO ROWS matched {symbol} {timeframe}. "
+            "Nothing was deleted. Check that the timeframe dropdown matches "
+            "the data you actually want to wipe (click Database overview "
+            "above to see what's stored)."
+        )
+
     return _emit(
         f"wipe: COMPLETE — deleted {deleted} rows for {symbol} {timeframe} "
         f"in {_format_elapsed(started)} "

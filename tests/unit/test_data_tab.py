@@ -243,6 +243,19 @@ class TestWipe:
         assert "symbol is empty" in out
 
     @pytest.mark.asyncio
+    async def test_zero_rows_warns_about_timeframe_mismatch(self) -> None:
+        """If the operator clicks Wipe with a (symbol, timeframe)
+        combination that has no rows (typically because they left the
+        timeframe dropdown at its default), the log must surface the
+        mismatch loudly — silent "deleted 0 rows" caused real
+        confusion in production."""
+        _install_runtime(_settings())
+        out = await data_tab.wipe("BTC-EUR", "1h")
+        assert "NO ROWS matched BTC-EUR 1h" in out
+        assert "Nothing was deleted" in out
+        assert "timeframe dropdown" in out
+
+    @pytest.mark.asyncio
     async def test_logs_started_and_completed_with_count(self) -> None:
         runtime = _install_runtime(_settings())
         repo = OHLCVRepository(runtime.session_factory)
