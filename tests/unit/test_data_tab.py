@@ -294,3 +294,111 @@ class TestBackfillStream:
         joined = "\n".join(outputs)
         assert "FAILED" in joined
         assert "not supported" in joined
+
+    @pytest.mark.asyncio
+    async def test_logs_horizon_message_when_api_has_no_older_data(self) -> None:
+        """When iter_candle_pages exhausts before reaching `since_ms`,
+        the terminal must explain it as the API's data horizon — not a
+        cryptrink stop-short. Operator-reported diagnostic gap."""
+        _install_runtime(
+            _settings(
+                api_key="abc",
+                private_key="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            )
+        )
+
+        # The "API" returns one page that ends well after `since_ms`,
+        # then runs out. iter_candle_pages's empty-page exit fires.
+        page = [
+            {
+                "timestamp": 1_700_000_000_000 + i * 60_000,
+                "symbol": "BTC-EUR",
+                "timeframe": "1m",
+                "open": Decimal("100"),
+                "high": Decimal("110"),
+                "low": Decimal("90"),
+                "close": Decimal("105"),
+                "volume": Decimal("1"),
+            }
+            for i in range(50)
+        ]
+
+        async def fake_iter(_self: object, **_kwargs: object) -> object:
+            yield page
+
+        with (
+            patch(
+                "cryptrink.exchange.revolutx.RevolutXExchange.connect",
+                new=AsyncMock(),
+            ),
+            patch(
+                "cryptrink.exchange.revolutx.RevolutXExchange.close",
+                new=AsyncMock(),
+            ),
+            patch(
+                "cryptrink.exchange.revolutx.RevolutXExchange.iter_candle_pages",
+                new=fake_iter,
+            ),
+        ):
+            outputs: list[str] = []
+            # Request goes way back before anything in `page` — forces
+            # the horizon-stop branch.
+            async for chunk in data_tab.backfill("BTC-EUR", "1m", "2020-01-01", "2024-01-01"):
+                outputs.append(chunk)
+
+        joined = "\n".join(outputs)
+        assert "stopped because Revolut X has no data older than" in joined
+        assert "use a coarser timeframe (1h, 4h, 1d)" in joined
+
+    @pytest.mark.asyncio
+    async def test_logs_reached_start_when_pages_cover_requested_range(self) -> None:
+        """When the earliest page reaches at or before since_ms, the
+        terminal must report 'requested start was reached', not the
+        retention-horizon message."""
+        _install_runtime(
+            _settings(
+                api_key="abc",
+                private_key="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            )
+        )
+
+        # Single page whose earliest is well before the requested start.
+        page = [
+            {
+                "timestamp": 1_700_000_000_000 + i * 60_000,
+                "symbol": "BTC-EUR",
+                "timeframe": "1m",
+                "open": Decimal("100"),
+                "high": Decimal("110"),
+                "low": Decimal("90"),
+                "close": Decimal("105"),
+                "volume": Decimal("1"),
+            }
+            for i in range(10)
+        ]
+
+        async def fake_iter(_self: object, **_kwargs: object) -> object:
+            yield page
+
+        with (
+            patch(
+                "cryptrink.exchange.revolutx.RevolutXExchange.connect",
+                new=AsyncMock(),
+            ),
+            patch(
+                "cryptrink.exchange.revolutx.RevolutXExchange.close",
+                new=AsyncMock(),
+            ),
+            patch(
+                "cryptrink.exchange.revolutx.RevolutXExchange.iter_candle_pages",
+                new=fake_iter,
+            ),
+        ):
+            outputs: list[str] = []
+            # Request starts AFTER the earliest candle in the page.
+            async for chunk in data_tab.backfill("BTC-EUR", "1m", "2024-01-01", "2024-12-31"):
+                outputs.append(chunk)
+
+        joined = "\n".join(outputs)
+        assert "stopped because requested start was reached" in joined
+        assert "no data older than" not in joined

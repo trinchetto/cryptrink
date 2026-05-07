@@ -244,7 +244,9 @@ async def backfill(
     seen: set[int] = set()
     collected: list[dict[str, Any]] = []
     page_num = 0
+    earliest_seen_ms: int | None = None
     fetch_started = time.perf_counter()
+    fetch_failed = False
 
     try:
         try:
@@ -263,7 +265,10 @@ async def backfill(
                     seen.add(ts)
                     collected.append(candle)
                     new += 1
-                earliest = datetime.fromtimestamp(int(page[0]["timestamp"]) / 1000, tz=UTC)
+                page_earliest = int(page[0]["timestamp"])
+                if earliest_seen_ms is None or page_earliest < earliest_seen_ms:
+                    earliest_seen_ms = page_earliest
+                earliest = datetime.fromtimestamp(page_earliest / 1000, tz=UTC)
                 latest = datetime.fromtimestamp(int(page[-1]["timestamp"]) / 1000, tz=UTC)
                 yield _emit(
                     f"backfill: page {page_num} • {len(page):>4} candles "
@@ -271,14 +276,44 @@ async def backfill(
                     f"{latest.isoformat(timespec='seconds')}"
                 )
         except Exception as exc:
+            fetch_failed = True
             yield _emit_failure(f"backfill: page {page_num + 1} fetch failed", exc)
     finally:
         with contextlib.suppress(Exception):
             await exchange.close()
         yield _emit(
-            f"backfill: API fetch finished after {_format_elapsed(fetch_started)} "
+            f"backfill: pages exhausted in {_format_elapsed(fetch_started)} "
             f"({page_num} pages, {len(collected)} unique candles)"
         )
+
+    # Distinguish termination reasons so the operator knows whether more
+    # data exists upstream or whether the API simply has nothing older.
+    if not fetch_failed:
+        if earliest_seen_ms is None:
+            yield _emit("backfill: stopped because Revolut X returned no candles for this range")
+        elif earliest_seen_ms <= since_ms:
+            iso = datetime.fromtimestamp(earliest_seen_ms / 1000, tz=UTC).isoformat(
+                timespec="seconds"
+            )
+            yield _emit(f"backfill: stopped because requested start was reached ({iso})")
+        elif page_num >= 50:
+            iso = datetime.fromtimestamp(earliest_seen_ms / 1000, tz=UTC).isoformat(
+                timespec="seconds"
+            )
+            yield _emit(
+                f"backfill: stopped at the max_pages cap (50 pages); older history may "
+                f"still be available — re-run with End={iso} to continue paging back"
+            )
+        else:
+            iso = datetime.fromtimestamp(earliest_seen_ms / 1000, tz=UTC).isoformat(
+                timespec="seconds"
+            )
+            yield _emit(
+                f"backfill: stopped because Revolut X has no data older than {iso} "
+                f"for {symbol} {timeframe}. Short timeframes (1m, 5m, 15m) are "
+                "retained for only a limited window — use a coarser timeframe "
+                "(1h, 4h, 1d) for longer history."
+            )
 
     candles = sorted(
         (c for c in collected if since_ms <= int(c["timestamp"]) <= until_ms),
@@ -459,7 +494,13 @@ def render() -> None:
         gr.Markdown(
             "Manage the historical OHLCV table the Backtest, Suggest, and Live "
             "tabs read from. Every action is logged to the terminal at the "
-            "bottom of the tab — there are no other status panes.\n\n" + cred_hint
+            "bottom of the tab — there are no other status panes.\n\n"
+            "**Note on retention.** Revolut X's `/candles` endpoint keeps "
+            "short timeframes (1m, 5m, 15m) for only a limited window — "
+            "expect 1m to cover the most recent ~28 days. For longer history, "
+            "use a coarser timeframe (1h, 4h, 1d). The backfill log makes "
+            "the data horizon explicit when it stops short of your requested "
+            "start.\n\n" + cred_hint
         )
 
         with gr.Row():
