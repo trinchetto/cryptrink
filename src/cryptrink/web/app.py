@@ -8,7 +8,7 @@ import gradio as gr
 
 from cryptrink.core.logging import get_logger
 from cryptrink.web.state import get_runtime
-from cryptrink.web.tabs import backtest, live, status, suggest
+from cryptrink.web.tabs import backtest, data, live, status, suggest
 
 if TYPE_CHECKING:
     from cryptrink.core.config import Settings
@@ -69,6 +69,7 @@ def build_demo() -> gr.Blocks:
             backtest.render()
             suggest.render()
             live.render()
+            data.render()
             status.render()
 
     return demo  # type: ignore[no-any-return]

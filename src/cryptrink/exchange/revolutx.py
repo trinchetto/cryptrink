@@ -43,6 +43,43 @@ logger = get_logger(__name__)
 DEFAULT_BASE_URL = "https://revx.revolut.com/api/1.0"
 
 
+# Map cryptrink string timeframes to the integer minutes the
+# /candles/{symbol} endpoint expects in its `interval` query param.
+# Supported intervals are exactly enumerated by the Revolut X OpenAPI
+# spec — anything outside this list will be rejected by the API with 400.
+_TIMEFRAME_TO_INTERVAL_MIN: dict[str, int] = {
+    "1m": 1,
+    "5m": 5,
+    "15m": 15,
+    "30m": 30,
+    "1h": 60,
+    "4h": 240,
+    "1d": 1440,
+    "2d": 2880,
+    "4d": 5760,
+    "1w": 10080,
+    "2w": 20160,
+    "4w": 40320,
+}
+
+
+def timeframe_to_interval_minutes(timeframe: str) -> int:
+    """Translate a cryptrink timeframe string into the API's `interval` integer.
+
+    Raises:
+        ValueError: If the timeframe isn't supported by /candles.
+    """
+    try:
+        return _TIMEFRAME_TO_INTERVAL_MIN[timeframe]
+    except KeyError as exc:
+        supported = ", ".join(_TIMEFRAME_TO_INTERVAL_MIN.keys())
+        msg = (
+            f"Timeframe {timeframe!r} is not supported by Revolut X /candles. "
+            f"Supported: {supported}"
+        )
+        raise ValueError(msg) from exc
+
+
 class RevolutXExchange(BaseExchange):
     """Revolut X cryptocurrency exchange client.
 
@@ -414,6 +451,141 @@ class RevolutXExchange(BaseExchange):
                 symbols.append(symbol_key.replace("/", "-"))
 
         return symbols
+
+    async def get_candles(
+        self,
+        symbol: str,
+        timeframe: str = "1h",
+        since_ms: int | None = None,
+        until_ms: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fetch historical OHLCV candles via ``/candles/{symbol}``.
+
+        The Revolut X API returns up to 5000 candles per request. If
+        ``since_ms`` is omitted the response is the most recent 5000
+        candles ending at ``until_ms`` (or now). Use :meth:`backfill_candles`
+        for ranges that span more than one page.
+
+        Args:
+            symbol: Trading pair, e.g. ``"BTC-EUR"``. Cryptrink's dash
+                form is sent verbatim — the API accepts both ``BTC-USD``
+                and ``BTC/USD`` shapes per the OpenAPI spec.
+            timeframe: Cryptrink timeframe string. Translated via
+                :func:`timeframe_to_interval_minutes` to the ``interval``
+                query param the API expects.
+            since_ms: Start timestamp in Unix epoch milliseconds.
+                Optional — when omitted the API returns the latest 5000
+                candles up to ``until_ms``.
+            until_ms: End timestamp in Unix epoch milliseconds. Optional —
+                defaults to the current time on the server side.
+
+        Returns:
+            List of dicts in the same shape :class:`HistoricalDataFeed`
+            consumes: ``{"symbol", "timeframe", "timestamp", "open",
+            "high", "low", "close", "volume"}``. ``timestamp`` is the
+            candle's start in ms; OHLCV values are :class:`Decimal`.
+        """
+        interval = timeframe_to_interval_minutes(timeframe)
+
+        params: dict[str, Any] = {"interval": interval}
+        if since_ms is not None:
+            params["since"] = int(since_ms)
+        if until_ms is not None:
+            params["until"] = int(until_ms)
+
+        data = await self._request(
+            "GET",
+            f"/candles/{symbol}",
+            params=params,
+            authenticated=True,
+        )
+
+        candles_list = data.get("data", []) if isinstance(data, dict) else []
+        candles: list[dict[str, Any]] = []
+        for c in candles_list:
+            candles.append(
+                {
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "timestamp": int(c["start"]),
+                    "open": Decimal(str(c["open"])),
+                    "high": Decimal(str(c["high"])),
+                    "low": Decimal(str(c["low"])),
+                    "close": Decimal(str(c["close"])),
+                    "volume": Decimal(str(c["volume"])),
+                }
+            )
+
+        # Some pages can come back unsorted; normalise to ascending order so
+        # the caller (and OHLCVRepository) doesn't have to care.
+        candles.sort(key=lambda candle: candle["timestamp"])
+        return candles
+
+    async def backfill_candles(
+        self,
+        symbol: str,
+        timeframe: str,
+        since_ms: int,
+        until_ms: int | None = None,
+        max_pages: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Page :meth:`get_candles` backwards until the requested range is covered.
+
+        Each page returns up to 5000 candles ending at ``until_ms`` (or
+        the previous page's earliest candle on subsequent calls). The
+        loop terminates when (a) the API returns an empty page, (b) the
+        earliest candle in the latest page is at or before ``since_ms``,
+        or (c) ``max_pages`` is reached — whichever happens first.
+
+        Args:
+            symbol: Trading pair.
+            timeframe: Cryptrink timeframe string.
+            since_ms: Earliest timestamp the caller wants (inclusive).
+            until_ms: Latest timestamp; defaults to now.
+            max_pages: Hard cap on pagination iterations to bound the
+                request budget on a misbehaving server.
+
+        Returns:
+            Deduplicated, ascending-sorted list of OHLCV dicts covering
+            ``[since_ms, until_ms]`` to the extent the API exposes it.
+        """
+        if until_ms is None:
+            until_ms = int(datetime.now(UTC).timestamp() * 1000)
+        if since_ms >= until_ms:
+            return []
+
+        seen: set[int] = set()
+        collected: list[dict[str, Any]] = []
+        cursor = until_ms
+
+        for _ in range(max_pages):
+            page = await self.get_candles(
+                symbol=symbol,
+                timeframe=timeframe,
+                since_ms=since_ms,
+                until_ms=cursor,
+            )
+            if not page:
+                break
+
+            new_in_page = 0
+            for candle in page:
+                ts = candle["timestamp"]
+                if ts in seen:
+                    continue
+                seen.add(ts)
+                collected.append(candle)
+                new_in_page += 1
+
+            earliest = page[0]["timestamp"]
+            if earliest <= since_ms or new_in_page == 0:
+                break
+
+            # Walk the cursor back so the next page covers the older window.
+            cursor = earliest - 1
+
+        collected.sort(key=lambda candle: candle["timestamp"])
+        return [c for c in collected if since_ms <= c["timestamp"] <= until_ms]
 
     # -------------------------------------------------------------------------
     # Account Methods
