@@ -16,7 +16,7 @@ from cryptrink.execution.suggest import SuggestExecutor
 from cryptrink.runtime import resolve_strategy
 from cryptrink.strategies import registry as strategy_registry
 from cryptrink.strategies.base import StrategyContext
-from cryptrink.web.state import get_runtime
+from cryptrink.web.state import default_symbol, get_runtime, get_symbol_choices
 
 
 async def run_suggest(strategy_name: str, symbol: str) -> dict[str, object]:
@@ -105,8 +105,6 @@ def render() -> None:
         if runtime.settings.default_strategy in strategy_options
         else (strategy_options[0] if strategy_options else None)
     )
-    default_symbol = runtime.settings.symbols[0] if runtime.settings.symbols else "BTC-EUR"
-
     with gr.Tab("Suggest"):
         gr.Markdown(
             "Generate a one-shot trade suggestion from the latest stored candle. "
@@ -118,7 +116,12 @@ def render() -> None:
                 value=default_strategy,
                 label="Strategy",
             )
-            symbol_input = gr.Textbox(value=default_symbol, label="Symbol")
+            symbol_input = gr.Dropdown(
+                choices=get_symbol_choices(),
+                value=default_symbol(),
+                label="Symbol",
+                allow_custom_value=True,
+            )
         run_btn = gr.Button("Suggest", variant="primary")
         result_output = gr.JSON(label="Suggestion")
 

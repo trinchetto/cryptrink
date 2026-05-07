@@ -180,13 +180,31 @@ class RiskSettings(BaseSettings):
     )
 
 
+def _default_db_url() -> str:
+    """Pick a default DB URL based on what's mounted at process startup.
+
+    On HF Spaces with a Storage Bucket mounted at ``/data`` (the
+    documented persistent path), we want the SQLite file to land there
+    so it survives factory rebuilds. When ``/data`` exists AND is
+    writable, default to ``/data/cryptrink.db``; otherwise keep the
+    process-local ``cryptrink.db`` so local dev and CI are unaffected.
+
+    The ``DB_URL`` env var still wins — pydantic-settings honours it
+    before this factory runs.
+    """
+    persistent = Path("/data")
+    if persistent.is_dir() and os.access(persistent, os.W_OK):
+        return "sqlite+aiosqlite:////data/cryptrink.db"
+    return "sqlite+aiosqlite:///cryptrink.db"
+
+
 class DatabaseSettings(BaseSettings):
     """Database configuration."""
 
     model_config = SettingsConfigDict(env_prefix="DB_")
 
     url: str = Field(
-        default="sqlite+aiosqlite:///cryptrink.db",
+        default_factory=_default_db_url,
         description="Database connection URL",
     )
     echo: bool = Field(default=False, description="Echo SQL statements")

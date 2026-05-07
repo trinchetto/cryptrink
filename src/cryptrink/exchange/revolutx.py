@@ -5,6 +5,7 @@ interface for the Revolut X cryptocurrency exchange.
 """
 
 import json
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -41,6 +42,43 @@ logger = get_logger(__name__)
 # Revolut X API base URL
 # The base URL already includes the /api/1.0/ prefix
 DEFAULT_BASE_URL = "https://revx.revolut.com/api/1.0"
+
+
+# Map cryptrink string timeframes to the integer minutes the
+# /candles/{symbol} endpoint expects in its `interval` query param.
+# Supported intervals are exactly enumerated by the Revolut X OpenAPI
+# spec — anything outside this list will be rejected by the API with 400.
+_TIMEFRAME_TO_INTERVAL_MIN: dict[str, int] = {
+    "1m": 1,
+    "5m": 5,
+    "15m": 15,
+    "30m": 30,
+    "1h": 60,
+    "4h": 240,
+    "1d": 1440,
+    "2d": 2880,
+    "4d": 5760,
+    "1w": 10080,
+    "2w": 20160,
+    "4w": 40320,
+}
+
+
+def timeframe_to_interval_minutes(timeframe: str) -> int:
+    """Translate a cryptrink timeframe string into the API's `interval` integer.
+
+    Raises:
+        ValueError: If the timeframe isn't supported by /candles.
+    """
+    try:
+        return _TIMEFRAME_TO_INTERVAL_MIN[timeframe]
+    except KeyError as exc:
+        supported = ", ".join(_TIMEFRAME_TO_INTERVAL_MIN.keys())
+        msg = (
+            f"Timeframe {timeframe!r} is not supported by Revolut X /candles. "
+            f"Supported: {supported}"
+        )
+        raise ValueError(msg) from exc
 
 
 class RevolutXExchange(BaseExchange):
@@ -414,6 +452,170 @@ class RevolutXExchange(BaseExchange):
                 symbols.append(symbol_key.replace("/", "-"))
 
         return symbols
+
+    async def get_candles(
+        self,
+        symbol: str,
+        timeframe: str = "1h",
+        since_ms: int | None = None,
+        until_ms: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fetch historical OHLCV candles via ``/candles/{symbol}``.
+
+        The Revolut X API returns up to 5000 candles per request. If
+        ``since_ms`` is omitted the response is the most recent 5000
+        candles ending at ``until_ms`` (or now). Use :meth:`backfill_candles`
+        for ranges that span more than one page.
+
+        Args:
+            symbol: Trading pair, e.g. ``"BTC-EUR"``. Cryptrink's dash
+                form is sent verbatim — the API accepts both ``BTC-USD``
+                and ``BTC/USD`` shapes per the OpenAPI spec.
+            timeframe: Cryptrink timeframe string. Translated via
+                :func:`timeframe_to_interval_minutes` to the ``interval``
+                query param the API expects.
+            since_ms: Start timestamp in Unix epoch milliseconds.
+                Optional — when omitted the API returns the latest 5000
+                candles up to ``until_ms``.
+            until_ms: End timestamp in Unix epoch milliseconds. Optional —
+                defaults to the current time on the server side.
+
+        Returns:
+            List of dicts in the same shape :class:`HistoricalDataFeed`
+            consumes: ``{"symbol", "timeframe", "timestamp", "open",
+            "high", "low", "close", "volume"}``. ``timestamp`` is the
+            candle's start in ms; OHLCV values are :class:`Decimal`.
+        """
+        interval = timeframe_to_interval_minutes(timeframe)
+
+        params: dict[str, Any] = {"interval": interval}
+        if since_ms is not None:
+            params["since"] = int(since_ms)
+        if until_ms is not None:
+            params["until"] = int(until_ms)
+
+        data = await self._request(
+            "GET",
+            f"/candles/{symbol}",
+            params=params,
+            authenticated=True,
+        )
+
+        candles_list = data.get("data", []) if isinstance(data, dict) else []
+        candles: list[dict[str, Any]] = []
+        for c in candles_list:
+            candles.append(
+                {
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "timestamp": int(c["start"]),
+                    "open": Decimal(str(c["open"])),
+                    "high": Decimal(str(c["high"])),
+                    "low": Decimal(str(c["low"])),
+                    "close": Decimal(str(c["close"])),
+                    "volume": Decimal(str(c["volume"])),
+                }
+            )
+
+        # Some pages can come back unsorted; normalise to ascending order so
+        # the caller (and OHLCVRepository) doesn't have to care.
+        candles.sort(key=lambda candle: candle["timestamp"])
+        return candles
+
+    async def iter_candle_pages(
+        self,
+        symbol: str,
+        timeframe: str,
+        since_ms: int,
+        until_ms: int | None = None,
+        max_pages: int = 50,
+    ) -> AsyncIterator[list[dict[str, Any]]]:
+        """Async-iterate pages of candles backwards.
+
+        Each yielded page is the raw response from a single ``/candles``
+        call (no ``since_ms`` query param — Revolut X rejects requests
+        that would return more than 50,000 rows, so we always let the
+        API return its natural 5000-row window ending at ``until_ms``
+        and walk the cursor back ourselves).
+
+        The loop stops when (a) a page comes back empty, (b) the
+        earliest candle in a page is at or before ``since_ms``, or
+        (c) ``max_pages`` is reached. Caller is responsible for
+        deduplicating timestamps across pages.
+
+        Args:
+            symbol: Trading pair.
+            timeframe: Cryptrink timeframe string.
+            since_ms: Inclusive lower bound — pagination stops once a
+                page reaches at or before this timestamp.
+            until_ms: Inclusive upper bound; defaults to now.
+            max_pages: Hard cap on the number of HTTP calls the loop
+                will issue. Defaults to 50, which covers ~250k candles
+                — plenty for typical multi-year backfills at common
+                timeframes (e.g. 1h: ~17k/year, so 50 pages * 5000 ≈
+                14 years).
+        """
+        if until_ms is None:
+            until_ms = int(datetime.now(UTC).timestamp() * 1000)
+        if since_ms >= until_ms:
+            return
+
+        cursor = until_ms
+        for _ in range(max_pages):
+            page = await self.get_candles(
+                symbol=symbol,
+                timeframe=timeframe,
+                until_ms=cursor,
+                # since_ms intentionally omitted — see method docstring.
+            )
+            if not page:
+                return
+            yield page
+
+            earliest = page[0]["timestamp"]
+            if earliest <= since_ms:
+                return
+
+            cursor = earliest - 1
+
+    async def backfill_candles(
+        self,
+        symbol: str,
+        timeframe: str,
+        since_ms: int,
+        until_ms: int | None = None,
+        max_pages: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Convenience wrapper around :meth:`iter_candle_pages`.
+
+        Drains the page iterator, deduplicates candles by timestamp,
+        sorts ascending, and clips to ``[since_ms, until_ms]``. Use
+        :meth:`iter_candle_pages` directly when you want per-page
+        progress (the Data tab does this to stream backfill status).
+        """
+        if until_ms is None:
+            until_ms = int(datetime.now(UTC).timestamp() * 1000)
+        if since_ms >= until_ms:
+            return []
+
+        seen: set[int] = set()
+        collected: list[dict[str, Any]] = []
+        async for page in self.iter_candle_pages(
+            symbol=symbol,
+            timeframe=timeframe,
+            since_ms=since_ms,
+            until_ms=until_ms,
+            max_pages=max_pages,
+        ):
+            for candle in page:
+                ts = candle["timestamp"]
+                if ts in seen:
+                    continue
+                seen.add(ts)
+                collected.append(candle)
+
+        collected.sort(key=lambda candle: candle["timestamp"])
+        return [c for c in collected if since_ms <= c["timestamp"] <= until_ms]
 
     # -------------------------------------------------------------------------
     # Account Methods

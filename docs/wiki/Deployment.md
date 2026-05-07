@@ -75,7 +75,7 @@ hardware tier plus an attached Storage Bucket.
 
    | Name | Type | Required for | Notes |
    |------|------|--------------|-------|
-   | `DB_URL` | Variable | Persistence | `sqlite+aiosqlite:////data/cryptrink.db` |
+   | `DB_URL` | Variable | Override the default | Optional. When `/data` is mounted at boot, cryptrink auto-defaults to `sqlite+aiosqlite:////data/cryptrink.db`. Set this only if you want a different path or driver. |
    | `REVOLUTX_API_KEY` | Secret | Live mode | From your Revolut X API console |
    | `REVOLUTX_PRIVATE_KEY` | Secret | Live mode | Base64-encoded raw 32-byte Ed25519 seed |
    | `REVOLUTX_PRIVATE_KEY_PATH` | Variable | Live mode (alt) | Use this *or* `REVOLUTX_PRIVATE_KEY`. Path to a PEM file checked into the Space repo. |
