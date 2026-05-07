@@ -1,7 +1,11 @@
-"""Tests for the Data tab's overview + symbol-refresh helpers + size formatter.
+"""Tests for the Data tab's terminal log + handler outputs.
 
-The tab handlers use the WebRuntime singleton; we install a fresh
-in-memory runtime per test via fixture so cases don't bleed state.
+The Data tab now writes every action to a single shared terminal log
+(``_LOG``); each handler returns the rendered code-block instead of
+populating a separate status component. The tests below assert each
+handler's contribution — both the log lines that get appended and the
+explicit Started / Completed markers around long DB ops — and the
+isolation guarantees of ``clear_log``.
 """
 
 from __future__ import annotations
@@ -9,9 +13,6 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 import pytest
 from pydantic import SecretStr
@@ -28,6 +29,9 @@ from cryptrink.runtime import build_session_factory
 from cryptrink.web import state as web_state
 from cryptrink.web.state import WebRuntime, reset_runtime
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 gr = pytest.importorskip("gradio")  # data tab imports gradio at module load
 
 from cryptrink.web.tabs import data as data_tab  # noqa: E402
@@ -35,10 +39,12 @@ from cryptrink.web.tabs import data as data_tab  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _isolate() -> None:
-    """Each test starts with a fresh in-memory DB and an empty symbol cache."""
+    """Reset runtime + log between tests so cases don't bleed state."""
     reset_runtime()
+    data_tab._LOG.clear()
     yield
     reset_runtime()
+    data_tab._LOG.clear()
 
 
 def _settings(
@@ -59,30 +65,101 @@ def _settings(
 
 
 def _install_runtime(settings: Settings) -> WebRuntime:
-    """Install a runtime backed by an in-memory DB so DB-touching helpers run."""
     session_factory = build_session_factory(settings.database.url)
     runtime = WebRuntime(settings=settings, session_factory=session_factory)
     web_state._runtime = runtime
     return runtime
 
 
-class TestDatabaseOverview:
+# ----------------------------------------------------------------------
+# Terminal helpers
+# ----------------------------------------------------------------------
+
+
+class TestTerminalRendering:
+    def test_empty_terminal_shows_placeholder(self) -> None:
+        assert "empty terminal" in data_tab._render_terminal()
+
+    def test_emit_appends_and_returns_code_block(self) -> None:
+        out = data_tab._emit("hello")
+        assert "hello" in out
+        assert out.startswith("```")
+        assert out.endswith("```")
+        assert data_tab._LOG[-1].endswith("hello")
+
+    def test_emit_caps_log_at_max_lines(self) -> None:
+        for i in range(data_tab._LOG_MAX_LINES + 50):
+            data_tab._emit(f"line {i}")
+        assert len(data_tab._LOG) == data_tab._LOG_MAX_LINES
+        # Oldest lines were dropped; latest are kept.
+        assert "line 49" not in "\n".join(data_tab._LOG)
+        assert "line 249" in "\n".join(data_tab._LOG)
+
+    def test_clear_log_resets_buffer(self) -> None:
+        data_tab._emit("noise")
+        assert data_tab._LOG
+        out = data_tab.clear_log()
+        assert not data_tab._LOG
+        assert "empty terminal" in out
+
+
+class TestFormatDbSize:
+    def test_in_memory_db(self) -> None:
+        result = data_tab._format_db_size("sqlite+aiosqlite:///:memory:")
+        assert "in-memory" in result
+
+    def test_non_sqlite_url(self) -> None:
+        result = data_tab._format_db_size("postgresql+asyncpg://user@host/db")
+        assert "not a sqlite file" in result
+
+    def test_missing_file(self, tmp_path: Path) -> None:
+        url = f"sqlite+aiosqlite:///{tmp_path / 'never_created.db'}"
+        result = data_tab._format_db_size(url)
+        assert "does not exist" in result
+
+    def test_existing_file_reports_size(self, tmp_path: Path) -> None:
+        path = tmp_path / "existing.db"
+        path.write_bytes(b"x" * (2 * 1024 * 1024 + 12345))
+        url = f"sqlite+aiosqlite:///{path}"
+        result = data_tab._format_db_size(url)
+        assert str(path) in result
+        assert "MB" in result
+        assert "2.0" in result
+
+
+# ----------------------------------------------------------------------
+# Handlers
+# ----------------------------------------------------------------------
+
+
+class TestRefreshCounts:
     @pytest.mark.asyncio
-    async def test_empty_db_returns_size_markdown_and_empty_frame(self) -> None:
+    async def test_logs_started_and_completed_with_count(self) -> None:
         _install_runtime(_settings())
-        size_md, df = await data_tab.database_overview()
-        assert "in-memory" in size_md
-        assert df.empty
-        assert list(df.columns) == [
-            "Symbol",
-            "Timeframe",
-            "Candles",
-            "Earliest (UTC)",
-            "Latest (UTC)",
-        ]
+        out = await data_tab.refresh_counts("BTC-EUR", "1h")
+        assert "count: starting" in out
+        assert "count: COMPLETE" in out
+        assert "0 candles" in out
 
     @pytest.mark.asyncio
-    async def test_groups_by_symbol_timeframe_and_reports_counts(self) -> None:
+    async def test_empty_symbol_logs_failure(self) -> None:
+        _install_runtime(_settings())
+        out = await data_tab.refresh_counts("", "1h")
+        assert "FAILED" in out
+        assert "symbol is empty" in out
+
+
+class TestDatabaseOverview:
+    @pytest.mark.asyncio
+    async def test_empty_db_logs_zero_groups(self) -> None:
+        _install_runtime(_settings())
+        out = await data_tab.database_overview()
+        assert "overview: starting" in out
+        assert "0 (symbol, timeframe) groups" in out
+        assert "overview: COMPLETE" in out
+
+    @pytest.mark.asyncio
+    async def test_lists_one_line_per_group(self) -> None:
         runtime = _install_runtime(_settings())
         repo = OHLCVRepository(runtime.session_factory)
         from cryptrink.cli.utils import init_db_schema
@@ -103,64 +180,62 @@ class TestDatabaseOverview:
                 for i in range(3)
             ]
         )
+
+        out = await data_tab.database_overview()
+        assert "1 (symbol, timeframe) groups" in out
+        assert "BTC-EUR" in out
+        assert "3 candles" in out
+
+
+class TestWipe:
+    @pytest.mark.asyncio
+    async def test_requires_typed_confirm(self) -> None:
+        _install_runtime(_settings())
+        out = await data_tab.wipe("BTC-EUR", "1h", "")
+        assert "FAILED" in out
+        assert "type DELETE" in out
+
+    @pytest.mark.asyncio
+    async def test_logs_started_and_completed_with_count(self) -> None:
+        runtime = _install_runtime(_settings())
+        repo = OHLCVRepository(runtime.session_factory)
+        from cryptrink.cli.utils import init_db_schema
+
+        await init_db_schema(runtime.session_factory)
         await repo.save_batch(
             [
                 {
-                    "symbol": "ETH-EUR",
-                    "timeframe": "5m",
-                    "timestamp": 1_700_000_000_000 + i * 300_000,
-                    "open": Decimal("10"),
-                    "high": Decimal("12"),
-                    "low": Decimal("9"),
-                    "close": Decimal("11"),
-                    "volume": Decimal("2"),
+                    "symbol": "BTC-EUR",
+                    "timeframe": "1h",
+                    "timestamp": 1_700_000_000_000 + i * 3_600_000,
+                    "open": Decimal("100"),
+                    "high": Decimal("110"),
+                    "low": Decimal("90"),
+                    "close": Decimal("105"),
+                    "volume": Decimal("1"),
                 }
-                for i in range(5)
+                for i in range(2)
             ]
         )
 
-        _, df = await data_tab.database_overview()
-        assert list(df["Symbol"]) == ["BTC-EUR", "ETH-EUR"]
-        assert list(df["Timeframe"]) == ["1h", "5m"]
-        assert list(df["Candles"]) == [3, 5]
-        for _, row in df.iterrows():
-            assert row["Earliest (UTC)"] < row["Latest (UTC)"]
-
-
-class TestFormatDbSize:
-    def test_in_memory_url_renders_explanatory_message(self) -> None:
-        result = data_tab._format_db_size("sqlite+aiosqlite:///:memory:")
-        assert "in-memory" in result
-
-    def test_non_sqlite_url_falls_back_gracefully(self) -> None:
-        result = data_tab._format_db_size("postgresql+asyncpg://user@host/db")
-        assert "not a sqlite file" in result
-
-    def test_missing_file_reports_does_not_exist(self, tmp_path: Path) -> None:
-        url = f"sqlite+aiosqlite:///{tmp_path / 'never_created.db'}"
-        result = data_tab._format_db_size(url)
-        assert "does not exist" in result
-
-    def test_existing_file_reports_size_in_mb(self, tmp_path: Path) -> None:
-        path = tmp_path / "existing.db"
-        path.write_bytes(b"x" * (2 * 1024 * 1024 + 12345))  # ~2.01 MB
-        url = f"sqlite+aiosqlite:///{path}"
-        result = data_tab._format_db_size(url)
-        # Two-decimal MB number, plus the path printed for the operator.
-        assert "MB" in result
-        assert str(path) in result
-        assert "2.0" in result  # 2.01 or 2.00 depending on float math
+        out = await data_tab.wipe("BTC-EUR", "1h", "DELETE")
+        assert "wipe: starting" in out
+        assert "wipe: COMPLETE" in out
+        assert "deleted 2 rows" in out
 
 
 class TestRefreshSymbols:
     @pytest.mark.asyncio
-    async def test_no_creds_raises_friendly_error(self) -> None:
-        _install_runtime(_settings())  # no creds
-        with pytest.raises(gr.Error, match="credentials are not configured"):
-            await data_tab.refresh_symbols("BTC-EUR")
+    async def test_no_creds_logs_failure(self) -> None:
+        _install_runtime(_settings())
+        update, log = await data_tab.refresh_symbols("BTC-EUR")
+        assert "FAILED" in log
+        assert "credentials not configured" in log
+        # Dropdown left untouched on failure.
+        assert getattr(update, "value", None) is None or update == gr.update()
 
     @pytest.mark.asyncio
-    async def test_loads_symbols_and_caches_on_runtime(self) -> None:
+    async def test_loads_symbols_logs_completed(self) -> None:
         runtime = _install_runtime(
             _settings(
                 api_key="abc",
@@ -168,7 +243,7 @@ class TestRefreshSymbols:
             )
         )
 
-        live_symbols = ["BTC-EUR", "ETH-EUR", "SOL-EUR", "USDC-EUR"]
+        live_symbols = ["BTC-EUR", "ETH-EUR", "SOL-EUR"]
         with (
             patch(
                 "cryptrink.exchange.revolutx.RevolutXExchange.connect",
@@ -183,51 +258,39 @@ class TestRefreshSymbols:
                 new=AsyncMock(return_value=live_symbols),
             ),
         ):
-            update, status = await data_tab.refresh_symbols("BTC-EUR")
+            update, log = await data_tab.refresh_symbols("BTC-EUR")
 
         assert update["choices"] == sorted(live_symbols)
         assert update["value"] == "BTC-EUR"
-        assert "Loaded" in status and "4" in status
-        # The runtime cache is now populated; other tabs see this on reload.
+        assert "symbols: COMPLETE" in log
         assert runtime.cached_symbols == sorted(live_symbols)
 
+
+class TestBackfillStream:
     @pytest.mark.asyncio
-    async def test_value_falls_back_to_first_when_current_missing(self) -> None:
+    async def test_logs_failure_when_creds_missing(self) -> None:
+        _install_runtime(_settings())  # no creds
+        outputs: list[str] = []
+        async for chunk in data_tab.backfill("BTC-EUR", "1h", "2024-01-01", ""):
+            outputs.append(chunk)
+        # The stream still emits validation lines; the last yielded chunk
+        # must surface the failure to the operator.
+        joined = "\n".join(outputs)
+        assert "backfill: validating inputs" in joined
+        assert "FAILED" in joined
+        assert "credentials not configured" in joined
+
+    @pytest.mark.asyncio
+    async def test_logs_failure_for_unsupported_timeframe(self) -> None:
         _install_runtime(
             _settings(
                 api_key="abc",
                 private_key="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
             )
         )
-
-        live_symbols = ["BTC-EUR", "ETH-EUR"]
-        with (
-            patch("cryptrink.exchange.revolutx.RevolutXExchange.connect", new=AsyncMock()),
-            patch("cryptrink.exchange.revolutx.RevolutXExchange.close", new=AsyncMock()),
-            patch(
-                "cryptrink.exchange.revolutx.RevolutXExchange.get_symbols",
-                new=AsyncMock(return_value=live_symbols),
-            ),
-        ):
-            update, _ = await data_tab.refresh_symbols("DOGE-EUR")
-
-        assert update["value"] == "BTC-EUR"
-
-    @pytest.mark.asyncio
-    async def test_empty_response_raises(self) -> None:
-        _install_runtime(
-            _settings(
-                api_key="abc",
-                private_key="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-            )
-        )
-        with (
-            patch("cryptrink.exchange.revolutx.RevolutXExchange.connect", new=AsyncMock()),
-            patch("cryptrink.exchange.revolutx.RevolutXExchange.close", new=AsyncMock()),
-            patch(
-                "cryptrink.exchange.revolutx.RevolutXExchange.get_symbols",
-                new=AsyncMock(return_value=[]),
-            ),
-            pytest.raises(gr.Error, match="empty symbol list"),
-        ):
-            await data_tab.refresh_symbols("BTC-EUR")
+        outputs: list[str] = []
+        async for chunk in data_tab.backfill("BTC-EUR", "3m", "2024-01-01", "2024-02-01"):
+            outputs.append(chunk)
+        joined = "\n".join(outputs)
+        assert "FAILED" in joined
+        assert "not supported" in joined

@@ -73,6 +73,62 @@ class TestDatabaseSettings:
         assert "sqlite" in settings.url
         assert settings.echo is False
 
+    def test_default_db_url_helper_returns_data_path_when_mounted(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The auto-detect helper that drives the default factory must
+        return the ``/data/cryptrink.db`` path when ``/data`` exists and
+        is writable (HF Spaces with a Storage Bucket attached)."""
+        from pathlib import Path
+
+        from cryptrink.core import config as config_module
+
+        original_is_dir = Path.is_dir
+
+        def fake_is_dir(self: Path) -> bool:
+            if str(self) == "/data":
+                return True
+            return original_is_dir(self)
+
+        monkeypatch.setattr(Path, "is_dir", fake_is_dir)
+        monkeypatch.setattr(
+            config_module.os,
+            "access",
+            lambda path, _mode: str(path) == "/data",
+        )
+
+        assert config_module._default_db_url() == "sqlite+aiosqlite:////data/cryptrink.db"
+
+    def test_default_db_url_helper_falls_back_when_no_data_dir(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without ``/data`` (local dev, CI), the default stays on the
+        process-local ``cryptrink.db`` so existing flows are unchanged."""
+        from pathlib import Path
+
+        from cryptrink.core import config as config_module
+
+        original_is_dir = Path.is_dir
+
+        def fake_is_dir(self: Path) -> bool:
+            if str(self) == "/data":
+                return False
+            return original_is_dir(self)
+
+        monkeypatch.setattr(Path, "is_dir", fake_is_dir)
+
+        assert config_module._default_db_url() == "sqlite+aiosqlite:///cryptrink.db"
+
+    def test_db_url_env_override_wins_over_data_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Operators who set DB_URL explicitly must always win over the
+        auto-detection (e.g. dev pointing at a tmp file, or pointing at
+        a remote postgres in the future)."""
+        monkeypatch.setenv("DB_URL", "sqlite+aiosqlite:///custom.db")
+        settings = DatabaseSettings()
+        assert settings.url == "sqlite+aiosqlite:///custom.db"
+
 
 class TestSettings:
     """Tests for main application settings."""

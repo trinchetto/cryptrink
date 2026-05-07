@@ -6,15 +6,12 @@ The Backtest, Suggest, and Live tabs all read from the OHLCV table, so
 this is the entry point for "I want real backtests, not the synthetic
 seed".
 
-Three flows:
-- **Backfill** — Symbol + timeframe + date range. Streams progress as
-  it pages :meth:`iter_candle_pages` (Revolut X's ``/candles`` endpoint
-  rejects single requests that would return more than ~50,000 rows, so
-  pagination is mandatory for wide ranges).
-- **Database overview** — one row per ``(symbol, timeframe)`` plus the
-  total file size on disk so operators can spot a bloating DB.
-- **Wipe** — Drops every OHLCV row for a given symbol + timeframe.
-  Typed-confirm guard so it can't fire accidentally.
+UX: every action — backfill, wipe, refresh symbols, count, overview —
+emits one or more lines into a shared terminal-style log at the bottom
+of the tab. There are no per-section status panels; the running log is
+the only output the operator needs to read. Backfill streams page-by-page
+progress; everything else logs a Started / Completed pair so the operator
+can see when a long DB op finishes.
 
 The Symbol input is a Dropdown sourced from
 :func:`cryptrink.web.state.get_symbol_choices`, populated by the
@@ -26,12 +23,12 @@ the live vocabulary.
 from __future__ import annotations
 
 import contextlib
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import gradio as gr
-import pandas as pd
 from sqlalchemy import delete, func, select
 
 from cryptrink.cli.utils import init_db_schema
@@ -49,6 +46,66 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 _SUPPORTED_TIMEFRAMES = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"]
+
+# ----------------------------------------------------------------------
+# Terminal log
+# ----------------------------------------------------------------------
+# Module-level shared log. Every Data tab handler appends to this and
+# returns the rendered terminal so the bound Markdown component shows
+# every action in one place.
+
+_LOG: list[str] = []
+_LOG_MAX_LINES = 200
+
+
+def _now() -> str:
+    """HH:MM:SS UTC for log line prefixes."""
+    return datetime.now(UTC).strftime("%H:%M:%S")
+
+
+def _emit(message: str) -> str:
+    """Append ``message`` to the shared log and return the rendered terminal.
+
+    The terminal caps at the most recent 200 lines so the markdown body
+    doesn't grow unbounded.
+    """
+    _LOG.append(f"[{_now()}] {message}")
+    if len(_LOG) > _LOG_MAX_LINES:
+        del _LOG[: len(_LOG) - _LOG_MAX_LINES]
+    return _render_terminal()
+
+
+def _render_terminal() -> str:
+    """Render the shared log as a markdown code block."""
+    if not _LOG:
+        return "```\n(empty terminal — click any button to log activity)\n```"
+    return "```\n" + "\n".join(_LOG) + "\n```"
+
+
+def clear_log() -> str:
+    """Wipe the shared log buffer. Used by the Clear button."""
+    _LOG.clear()
+    return _render_terminal()
+
+
+def _emit_failure(message: str, exc: Exception | None = None) -> str:
+    """Convenience: log an error with type + message."""
+    if exc is not None:
+        return _emit(f"FAILED: {message} ({type(exc).__name__}: {exc})")
+    return _emit(f"FAILED: {message}")
+
+
+def _format_elapsed(start_perf: float) -> str:
+    """Render elapsed time since ``start_perf`` (from ``time.perf_counter``)."""
+    elapsed = time.perf_counter() - start_perf
+    if elapsed < 1:
+        return f"{elapsed * 1000:.0f}ms"
+    return f"{elapsed:.2f}s"
+
+
+# ----------------------------------------------------------------------
+# DB / URL helpers
+# ----------------------------------------------------------------------
 
 
 def _parse_date(value: str, *, end_of_day: bool = False) -> datetime:
@@ -90,38 +147,25 @@ def _sqlite_file_path(db_url: str) -> Path | None:
     raw = db_url[len(prefix) :]
     if raw == ":memory:":
         return None
-    # Three-slash form leaves ``raw`` as a relative path; four-slash
-    # form leaves it with a leading slash, i.e. an absolute path.
     return Path(raw)
 
 
 def _format_db_size(db_url: str) -> str:
-    """Render the sqlite file size as markdown for the overview header."""
+    """Single-line rendering of the DB size for the log."""
     path = _sqlite_file_path(db_url)
     if path is None:
         if db_url.endswith(":memory:"):
-            return "_Database is in-memory; no file size._"
-        return f"_DB URL `{db_url}` is not a sqlite file; size unavailable._"
+            return "in-memory database (no on-disk size)"
+        return f"DB URL is not a sqlite file ({db_url}); size unavailable"
     if not path.exists():
-        return f"_Database file `{path}` does not exist yet._"
-    size_bytes = path.stat().st_size
-    size_mb = size_bytes / (1024 * 1024)
-    return f"**Database size:** {size_mb:.2f} MB (`{path}`)"
+        return f"sqlite file `{path}` does not exist yet (will be created on first write)"
+    size_mb = path.stat().st_size / (1024 * 1024)
+    return f"sqlite file `{path}` is {size_mb:.2f} MB"
 
 
-def _now_iso() -> str:
-    """Compact UTC timestamp for streaming log lines."""
-    return datetime.now(UTC).strftime("%H:%M:%S")
-
-
-def _render_log(lines: list[str]) -> str:
-    """Render a streaming log as a markdown code-block.
-
-    Caps the output at the most-recent 100 lines so a long backfill
-    doesn't grow an unbounded markdown body.
-    """
-    tail = lines[-100:]
-    return "```\n" + "\n".join(tail) + "\n```"
+# ----------------------------------------------------------------------
+# Handlers
+# ----------------------------------------------------------------------
 
 
 async def backfill(
@@ -130,58 +174,54 @@ async def backfill(
     start_date: str,
     end_date: str,
 ) -> AsyncIterator[str]:
-    """Stream backfill progress to the Data tab.
-
-    Async generator: each ``yield`` replaces the bound markdown output
-    with the latest log + (eventually) summary. Pagination is done
-    inline (rather than via :meth:`backfill_candles`) so the operator
-    sees per-page progress while pages stream in.
-    """
-    log: list[str] = []
-
-    def emit(message: str) -> str:
-        log.append(f"[{_now_iso()}] {message}")
-        return _render_log(log)
-
-    yield emit("Validating inputs…")
+    """Stream backfill progress to the shared terminal."""
+    yield _emit(f"backfill: validating inputs (symbol={symbol!r}, timeframe={timeframe!r})")
 
     if not symbol:
-        raise gr.Error("Enter a symbol (e.g. BTC-EUR).")
+        yield _emit_failure("backfill: symbol is empty")
+        return
     if not start_date:
-        raise gr.Error("Enter a start date (YYYY-MM-DD).")
+        yield _emit_failure("backfill: start_date is empty")
+        return
 
     runtime = get_runtime()
     if not has_revolutx_credentials(runtime.settings):
-        raise gr.Error(
-            "Revolut X credentials are not configured. /candles is a signed "
-            "endpoint — set REVOLUTX_API_KEY and REVOLUTX_PRIVATE_KEY (or "
-            "REVOLUTX_PRIVATE_KEY_PATH) before running a backfill."
+        yield _emit_failure(
+            "backfill: REVOLUTX credentials not configured "
+            "(set REVOLUTX_API_KEY + REVOLUTX_PRIVATE_KEY)"
         )
+        return
 
     try:
         start_dt = _parse_date(start_date)
         end_dt = _parse_date(end_date, end_of_day=True) if end_date else datetime.now(UTC)
     except ValueError as exc:
-        raise gr.Error(f"Invalid date: {exc}") from exc
+        yield _emit_failure("backfill: invalid date", exc)
+        return
     if end_dt <= start_dt:
-        raise gr.Error("End date must be after start date.")
+        yield _emit_failure("backfill: end date must be after start date")
+        return
 
-    yield emit(f"Range: {start_dt.isoformat()} → {end_dt.isoformat()} ({timeframe})")
-
+    yield _emit(f"backfill: range {start_dt.isoformat()} → {end_dt.isoformat()} ({timeframe})")
+    yield _emit("backfill: ensuring DB schema is initialised…")
+    schema_started = time.perf_counter()
     await init_db_schema(runtime.session_factory)
+    yield _emit(f"backfill: schema ready ({_format_elapsed(schema_started)})")
 
     from cryptrink.exchange.revolutx import RevolutXExchange, timeframe_to_interval_minutes
 
     try:
         timeframe_to_interval_minutes(timeframe)
     except ValueError as exc:
-        raise gr.Error(str(exc)) from exc
+        yield _emit_failure("backfill: timeframe not supported by /candles", exc)
+        return
 
     revolutx = runtime.settings.revolutx
     try:
         private_key_b64 = revolutx.get_private_key()
     except ValueError as exc:
-        raise gr.Error(f"Failed to load private key: {exc}") from exc
+        yield _emit_failure("backfill: failed to load private key", exc)
+        return
 
     exchange = RevolutXExchange(
         api_key=revolutx.api_key.get_secret_value(),
@@ -192,16 +232,19 @@ async def backfill(
     since_ms = int(start_dt.timestamp() * 1000)
     until_ms = int(end_dt.timestamp() * 1000)
 
-    yield emit("Connecting to Revolut X…")
+    yield _emit("backfill: connecting to Revolut X…")
+    connect_started = time.perf_counter()
     try:
         await exchange.connect()
     except Exception as exc:
-        raise gr.Error(f"Connect failed: {type(exc).__name__}: {exc}") from exc
-    yield emit("Connected. Paging /candles backwards from `until`.")
+        yield _emit_failure("backfill: connect failed", exc)
+        return
+    yield _emit(f"backfill: connected ({_format_elapsed(connect_started)})")
 
     seen: set[int] = set()
     collected: list[dict[str, Any]] = []
     page_num = 0
+    fetch_started = time.perf_counter()
 
     try:
         try:
@@ -222,76 +265,48 @@ async def backfill(
                     new += 1
                 earliest = datetime.fromtimestamp(int(page[0]["timestamp"]) / 1000, tz=UTC)
                 latest = datetime.fromtimestamp(int(page[-1]["timestamp"]) / 1000, tz=UTC)
-                yield emit(
-                    f"Page {page_num}: {len(page):>4} candles "
+                yield _emit(
+                    f"backfill: page {page_num} • {len(page):>4} candles "
                     f"({new} new) • {earliest.isoformat(timespec='seconds')} → "
                     f"{latest.isoformat(timespec='seconds')}"
                 )
         except Exception as exc:
-            raise gr.Error(f"Page {page_num + 1} failed: {type(exc).__name__}: {exc}") from exc
+            yield _emit_failure(f"backfill: page {page_num + 1} fetch failed", exc)
     finally:
         with contextlib.suppress(Exception):
             await exchange.close()
-            yield emit("Connection closed.")
+        yield _emit(
+            f"backfill: API fetch finished after {_format_elapsed(fetch_started)} "
+            f"({page_num} pages, {len(collected)} unique candles)"
+        )
 
-    # Filter to the requested window and sort.
     candles = sorted(
         (c for c in collected if since_ms <= int(c["timestamp"]) <= until_ms),
         key=lambda c: int(c["timestamp"]),
     )
 
-    yield emit(f"Persisting {len(candles)} candles to the OHLCV table…")
+    yield _emit(f"backfill: persisting {len(candles)} candles to OHLCV table…")
+    persist_started = time.perf_counter()
     repository = OHLCVRepository(runtime.session_factory)
     saved = await repository.save_batch(candles) if candles else 0
     total = await _stored_count(symbol, timeframe)
-    yield emit(f"Persisted. Total stored for {symbol} {timeframe}: {total}.")
-
-    earliest_iso = (
-        datetime.fromtimestamp(int(candles[0]["timestamp"]) / 1000, tz=UTC).isoformat(
-            timespec="seconds"
-        )
-        if candles
-        else "—"
+    yield _emit(
+        f"backfill: persisted {saved} candles in {_format_elapsed(persist_started)} "
+        f"(total stored for {symbol} {timeframe}: {total})"
     )
-    latest_iso = (
-        datetime.fromtimestamp(int(candles[-1]["timestamp"]) / 1000, tz=UTC).isoformat(
-            timespec="seconds"
-        )
-        if candles
-        else "—"
-    )
-
-    summary = (
-        "**Backfill complete.**\n\n"
-        "| Field | Value |\n"
-        "| --- | --- |\n"
-        f"| Symbol | `{symbol}` |\n"
-        f"| Timeframe | `{timeframe}` |\n"
-        f"| Requested range | {start_dt.date()} → {end_dt.date()} |\n"
-        f"| Pages fetched | {page_num} |\n"
-        f"| Candles fetched | {len(candles)} |\n"
-        f"| Earliest fetched | {earliest_iso} |\n"
-        f"| Latest fetched | {latest_iso} |\n"
-        f"| Persisted this run | {saved} |\n"
-        f"| Total stored ({symbol} {timeframe}) | {total} |\n"
-    )
-
-    yield summary + "\n\n" + _render_log(log)
+    yield _emit(f"backfill: COMPLETE ({_format_db_size(runtime.settings.database.url)})")
 
 
 async def wipe(symbol: str, timeframe: str, confirm: str) -> str:
-    """Delete every OHLCV row for ``(symbol, timeframe)``.
-
-    Requires the operator to type ``DELETE`` into the confirm box. The
-    primary safeguard is the typed-confirm — there is no Are-you-sure
-    modal in plain Gradio.
-    """
+    """Delete every OHLCV row for ``(symbol, timeframe)`` and log the outcome."""
     if not symbol:
-        raise gr.Error("Enter a symbol.")
+        return _emit_failure("wipe: symbol is empty")
     if confirm.strip() != "DELETE":
-        raise gr.Error("Type DELETE in the confirm box to wipe the rows.")
+        return _emit_failure("wipe: type DELETE in the confirm box to proceed")
 
+    _emit(f"wipe: starting for {symbol} {timeframe}")
     runtime = get_runtime()
+    started = time.perf_counter()
     await init_db_schema(runtime.session_factory)
 
     async with runtime.session_factory() as session:
@@ -308,28 +323,35 @@ async def wipe(symbol: str, timeframe: str, confirm: str) -> str:
         await session.execute(delete_stmt)
         await session.commit()
 
-    return f"**Wipe complete.**\n\nDeleted {deleted} OHLCV rows for `{symbol}` `{timeframe}`."
+    return _emit(
+        f"wipe: COMPLETE — deleted {deleted} rows for {symbol} {timeframe} "
+        f"in {_format_elapsed(started)} "
+        f"({_format_db_size(runtime.settings.database.url)})"
+    )
 
 
 async def refresh_counts(symbol: str, timeframe: str) -> str:
-    """Show how many candles are currently persisted for ``(symbol, timeframe)``."""
+    """Log how many candles are persisted for ``(symbol, timeframe)``."""
     if not symbol:
-        return "_Enter a symbol to inspect._"
+        return _emit_failure("count: symbol is empty")
+    _emit(f"count: starting for {symbol} {timeframe}")
     runtime = get_runtime()
+    started = time.perf_counter()
     await init_db_schema(runtime.session_factory)
     total = await _stored_count(symbol, timeframe)
-    return f"**{total}** candles currently stored for `{symbol}` `{timeframe}`."
+    return _emit(
+        f"count: COMPLETE — {total} candles for {symbol} {timeframe} ({_format_elapsed(started)})"
+    )
 
 
-async def database_overview() -> tuple[str, pd.DataFrame]:
-    """Return (size markdown, per-pair summary dataframe) for the overview section."""
+async def database_overview() -> str:
+    """Log a per-(symbol, timeframe) summary plus DB file size."""
+    _emit("overview: starting")
     runtime = get_runtime()
+    started = time.perf_counter()
     await init_db_schema(runtime.session_factory)
 
-    columns = ["Symbol", "Timeframe", "Candles", "Earliest (UTC)", "Latest (UTC)"]
     async with runtime.session_factory() as session:
-        # ``count`` collides with tuple.count on SQLAlchemy Row, so the
-        # label is ``candle_count`` to keep static type-checking happy.
         stmt = (
             select(
                 OHLCVModel.symbol,
@@ -345,39 +367,34 @@ async def database_overview() -> tuple[str, pd.DataFrame]:
         rows = list(result.all())
 
     if not rows:
-        df = pd.DataFrame(columns=columns)
+        _emit("overview: 0 (symbol, timeframe) groups in the OHLCV table")
     else:
-        data: list[dict[str, object]] = []
+        _emit(f"overview: {len(rows)} (symbol, timeframe) groups")
         for row in rows:
             earliest = datetime.fromtimestamp(int(row.earliest) / 1000, tz=UTC)
             latest = datetime.fromtimestamp(int(row.latest) / 1000, tz=UTC)
-            data.append(
-                {
-                    "Symbol": row.symbol,
-                    "Timeframe": row.timeframe,
-                    "Candles": int(row.candle_count),
-                    "Earliest (UTC)": earliest.isoformat(timespec="seconds"),
-                    "Latest (UTC)": latest.isoformat(timespec="seconds"),
-                }
+            _emit(
+                f"  {row.symbol:<10} {row.timeframe:<4} "
+                f"{int(row.candle_count):>6} candles  "
+                f"{earliest.isoformat(timespec='seconds')} → "
+                f"{latest.isoformat(timespec='seconds')}"
             )
-        df = pd.DataFrame(data, columns=columns)
 
-    return _format_db_size(runtime.settings.database.url), df
+    return _emit(
+        f"overview: COMPLETE in {_format_elapsed(started)} "
+        f"({_format_db_size(runtime.settings.database.url)})"
+    )
 
 
 async def refresh_symbols(current: str) -> tuple[object, str]:
-    """Pull the live symbol list from Revolut X and update the dropdown.
-
-    Updates :func:`cryptrink.web.state.set_cached_symbols` so other tabs'
-    dropdowns pick up the live vocabulary on the next page reload.
-    """
+    """Pull the live symbol list from Revolut X and log + update the dropdown."""
     runtime = get_runtime()
     if not has_revolutx_credentials(runtime.settings):
-        raise gr.Error(
-            "Revolut X credentials are not configured. Set REVOLUTX_API_KEY "
-            "and REVOLUTX_PRIVATE_KEY (or REVOLUTX_PRIVATE_KEY_PATH) before "
-            "refreshing the symbol list."
+        log = _emit_failure(
+            "symbols: REVOLUTX credentials not configured "
+            "(set REVOLUTX_API_KEY + REVOLUTX_PRIVATE_KEY)"
         )
+        return gr.update(), log
 
     from cryptrink.exchange.revolutx import RevolutXExchange
 
@@ -385,7 +402,7 @@ async def refresh_symbols(current: str) -> tuple[object, str]:
     try:
         private_key_b64 = revolutx.get_private_key()
     except ValueError as exc:
-        raise gr.Error(f"Failed to load private key: {exc}") from exc
+        return gr.update(), _emit_failure("symbols: failed to load private key", exc)
 
     exchange = RevolutXExchange(
         api_key=revolutx.api_key.get_secret_value(),
@@ -393,47 +410,58 @@ async def refresh_symbols(current: str) -> tuple[object, str]:
         base_url=revolutx.base_url,
     )
 
+    _emit("symbols: connecting to Revolut X /configuration/pairs…")
+    started = time.perf_counter()
     try:
         await exchange.connect()
+    except Exception as exc:
+        return gr.update(), _emit_failure("symbols: connect failed", exc)
+
+    try:
+        symbols: list[str]
         try:
             symbols = sorted(await exchange.get_symbols())
         except Exception as exc:
-            raise gr.Error(f"get_symbols() failed: {type(exc).__name__}: {exc}") from exc
+            return gr.update(), _emit_failure("symbols: get_symbols() failed", exc)
     finally:
         with contextlib.suppress(Exception):
             await exchange.close()
 
     if not symbols:
-        raise gr.Error("Revolut X returned an empty symbol list.")
+        return gr.update(), _emit_failure("symbols: API returned empty list")
 
     set_cached_symbols(symbols)
     new_value = current if current in symbols else symbols[0]
-    return (
-        gr.update(choices=symbols, value=new_value),
-        f"_Loaded {len(symbols)} symbols from Revolut X. "
-        "Reload the page to update the dropdowns on the other tabs._",
+    log = _emit(
+        f"symbols: COMPLETE — loaded {len(symbols)} symbols in {_format_elapsed(started)} "
+        "(reload the page to update the dropdowns on other tabs)"
     )
+    return gr.update(choices=symbols, value=new_value), log
 
 
 def render() -> None:
-    """Render the Data tab UI inside an enclosing :class:`gr.Tabs`."""
+    """Render the Data tab UI with a single shared terminal output."""
     runtime = get_runtime()
     creds_present = has_revolutx_credentials(runtime.settings)
     cred_hint = (
-        "_Revolut X credentials detected — backfills will hit the live "
-        "`/candles/{symbol}` endpoint._"
+        "_Revolut X credentials detected — the Backfill and Refresh buttons will hit the live API._"
         if creds_present
-        else "_Revolut X credentials are missing; the Backfill button will "
-        "report an error until you configure them._"
+        else "_Revolut X credentials missing; Backfill and Refresh will log an "
+        "error until you configure them._"
     )
+
+    # Seed the terminal with a one-time boot summary so the operator sees
+    # which DB the tab is talking to before they click anything.
+    if not _LOG:
+        _emit(f"boot: {_format_db_size(runtime.settings.database.url)}")
 
     with gr.Tab("Data"):
         gr.Markdown(
-            "Manage the historical OHLCV table the Backtest, Suggest, and "
-            "Live tabs read from. **Backfill** pages "
-            "`/candles/{symbol}` until the requested range is covered; "
-            "**Wipe** drops every row for a given symbol + timeframe.\n\n" + cred_hint
+            "Manage the historical OHLCV table the Backtest, Suggest, and Live "
+            "tabs read from. Every action is logged to the terminal at the "
+            "bottom of the tab — there are no other status panes.\n\n" + cred_hint
         )
+
         with gr.Row():
             symbol_input = gr.Dropdown(
                 choices=get_symbol_choices(),
@@ -446,72 +474,43 @@ def render() -> None:
                 value="1h",
                 label="Timeframe",
             )
-        with gr.Row():
-            refresh_symbols_btn = gr.Button("Refresh symbols from Revolut X", variant="secondary")
-            symbols_status = gr.Markdown()
-        refresh_symbols_btn.click(
-            fn=refresh_symbols,
-            inputs=[symbol_input],
-            outputs=[symbol_input, symbols_status],
-        )
 
-        gr.Markdown("### Backfill from `/candles/{symbol}`")
         with gr.Row():
             start_input = gr.Textbox(value="2024-01-01", label="Start (YYYY-MM-DD)")
             end_input = gr.Textbox(value="", label="End (YYYY-MM-DD, blank = now)")
-        backfill_btn = gr.Button("Backfill", variant="primary")
-        backfill_log = gr.Markdown()
+
+        with gr.Row():
+            backfill_btn = gr.Button("Backfill", variant="primary")
+            count_btn = gr.Button("Count selected pair")
+            overview_btn = gr.Button("Database overview")
+            refresh_symbols_btn = gr.Button("Refresh symbols", variant="secondary")
+
+        with gr.Row():
+            confirm_input = gr.Textbox(value="", label="Type DELETE to enable wipe")
+            wipe_btn = gr.Button("Wipe", variant="stop")
+            clear_btn = gr.Button("Clear log")
+
+        terminal = gr.Markdown(value=_render_terminal(), label="Terminal")
+
         backfill_btn.click(
             fn=backfill,
             inputs=[symbol_input, timeframe_input, start_input, end_input],
-            outputs=[backfill_log],
+            outputs=[terminal],
         )
-
-        gr.Markdown(
-            "### Database overview\n"
-            "One row per `(symbol, timeframe)` currently in the OHLCV "
-            "table — useful to confirm a backfill landed and to spot gaps. "
-            "Total file size on disk is shown above the table so you can "
-            "watch it grow."
-        )
-        overview_btn = gr.Button("Refresh database overview")
-        db_size_output = gr.Markdown()
-        overview_output = gr.Dataframe(
-            value=pd.DataFrame(
-                columns=["Symbol", "Timeframe", "Candles", "Earliest (UTC)", "Latest (UTC)"]
-            ),
-            label="Stored OHLCV",
-            interactive=False,
-        )
-        overview_btn.click(
-            fn=database_overview,
-            inputs=[],
-            outputs=[db_size_output, overview_output],
-        )
-
-        gr.Markdown(
-            "### Inspect a single pair\n"
-            "Quick count of candles for the symbol + timeframe selected above."
-        )
-        refresh_btn = gr.Button("Count candles for selected pair")
-        counts_output = gr.Markdown()
-        refresh_btn.click(
+        count_btn.click(
             fn=refresh_counts,
             inputs=[symbol_input, timeframe_input],
-            outputs=[counts_output],
+            outputs=[terminal],
         )
-
-        gr.Markdown(
-            "### Wipe (destructive)\n"
-            "Drops every OHLCV row for the chosen `(symbol, timeframe)` "
-            "above. Type `DELETE` to confirm."
+        overview_btn.click(fn=database_overview, inputs=[], outputs=[terminal])
+        refresh_symbols_btn.click(
+            fn=refresh_symbols,
+            inputs=[symbol_input],
+            outputs=[symbol_input, terminal],
         )
-        with gr.Row():
-            confirm_input = gr.Textbox(value="", label="Type DELETE to confirm")
-            wipe_btn = gr.Button("Wipe", variant="stop")
-        wipe_output = gr.Markdown()
         wipe_btn.click(
             fn=wipe,
             inputs=[symbol_input, timeframe_input, confirm_input],
-            outputs=[wipe_output],
+            outputs=[terminal],
         )
+        clear_btn.click(fn=clear_log, inputs=[], outputs=[terminal])
