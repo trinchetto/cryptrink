@@ -23,6 +23,7 @@ import contextlib
 from datetime import UTC, datetime
 
 import gradio as gr
+import pandas as pd
 from sqlalchemy import delete, func, select
 
 from cryptrink.cli.utils import init_db_schema
@@ -32,6 +33,12 @@ from cryptrink.web.live_setup import has_revolutx_credentials
 from cryptrink.web.state import get_runtime
 
 _SUPPORTED_TIMEFRAMES = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"]
+
+# Module-level cache for the symbol list fetched from Revolut X.
+# Populated by the "Refresh symbols" button so subsequent renders + clicks
+# see the live vocabulary instead of the configured defaults. Other tabs
+# can read this in a follow-up to share the same dropdown options.
+_cached_symbols: list[str] = []
 
 
 def _parse_date(value: str, *, end_of_day: bool = False) -> datetime:
@@ -211,6 +218,116 @@ async def refresh_counts(symbol: str, timeframe: str) -> str:
     return f"**{total}** candles currently stored for `{symbol}` `{timeframe}`."
 
 
+async def database_overview() -> pd.DataFrame:
+    """Return a one-row-per-(symbol, timeframe) summary of stored OHLCV.
+
+    Single SQL ``GROUP BY`` so the cost is constant regardless of how many
+    candles are stored. Empty database returns an empty frame with the
+    expected columns so the dataframe component renders without errors.
+    """
+    runtime = get_runtime()
+    await init_db_schema(runtime.session_factory)
+
+    columns = ["Symbol", "Timeframe", "Candles", "Earliest (UTC)", "Latest (UTC)"]
+    async with runtime.session_factory() as session:
+        # ``count`` collides with tuple.count on SQLAlchemy Row, so the
+        # label is ``candle_count`` to keep static type-checking happy.
+        stmt = (
+            select(
+                OHLCVModel.symbol,
+                OHLCVModel.timeframe,
+                func.count().label("candle_count"),
+                func.min(OHLCVModel.timestamp).label("earliest"),
+                func.max(OHLCVModel.timestamp).label("latest"),
+            )
+            .group_by(OHLCVModel.symbol, OHLCVModel.timeframe)
+            .order_by(OHLCVModel.symbol, OHLCVModel.timeframe)
+        )
+        result = await session.execute(stmt)
+        rows = list(result.all())
+
+    if not rows:
+        return pd.DataFrame(columns=columns)
+
+    data: list[dict[str, object]] = []
+    for row in rows:
+        earliest = datetime.fromtimestamp(int(row.earliest) / 1000, tz=UTC)
+        latest = datetime.fromtimestamp(int(row.latest) / 1000, tz=UTC)
+        data.append(
+            {
+                "Symbol": row.symbol,
+                "Timeframe": row.timeframe,
+                "Candles": int(row.candle_count),
+                "Earliest (UTC)": earliest.isoformat(timespec="seconds"),
+                "Latest (UTC)": latest.isoformat(timespec="seconds"),
+            }
+        )
+    return pd.DataFrame(data, columns=columns)
+
+
+async def refresh_symbols(current: str) -> tuple[object, str]:
+    """Pull the live symbol list from Revolut X and update the dropdown.
+
+    Returns a tuple of (Gradio update for the symbol Dropdown, status
+    markdown). Failures (no creds, signing/network errors) surface as
+    :class:`gr.Error` so the dropdown is left untouched and the operator
+    sees the underlying message in a banner.
+    """
+    global _cached_symbols
+    runtime = get_runtime()
+    if not has_revolutx_credentials(runtime.settings):
+        raise gr.Error(
+            "Revolut X credentials are not configured. Set REVOLUTX_API_KEY "
+            "and REVOLUTX_PRIVATE_KEY (or REVOLUTX_PRIVATE_KEY_PATH) before "
+            "refreshing the symbol list."
+        )
+
+    from cryptrink.exchange.revolutx import RevolutXExchange
+
+    revolutx = runtime.settings.revolutx
+    try:
+        private_key_b64 = revolutx.get_private_key()
+    except ValueError as exc:
+        raise gr.Error(f"Failed to load private key: {exc}") from exc
+
+    exchange = RevolutXExchange(
+        api_key=revolutx.api_key.get_secret_value(),
+        private_key_base64=private_key_b64,
+        base_url=revolutx.base_url,
+    )
+
+    try:
+        await exchange.connect()
+        try:
+            symbols = sorted(await exchange.get_symbols())
+        except Exception as exc:
+            raise gr.Error(f"get_symbols() failed: {type(exc).__name__}: {exc}") from exc
+    finally:
+        with contextlib.suppress(Exception):
+            await exchange.close()
+
+    if not symbols:
+        raise gr.Error("Revolut X returned an empty symbol list.")
+
+    _cached_symbols = symbols
+    new_value = current if current in symbols else symbols[0]
+    return (
+        gr.update(choices=symbols, value=new_value),
+        f"_Loaded {len(symbols)} symbols from Revolut X._",
+    )
+
+
+def _initial_symbol_choices(default_symbol: str) -> list[str]:
+    """Choose the initial dropdown choices: cached if available, else defaults."""
+    if _cached_symbols:
+        return _cached_symbols
+    runtime = get_runtime()
+    fallback = list(runtime.settings.symbols) if runtime.settings.symbols else [default_symbol]
+    if default_symbol not in fallback:
+        fallback.insert(0, default_symbol)
+    return fallback
+
+
 def render() -> None:
     """Render the Data tab UI inside an enclosing :class:`gr.Tabs`."""
     runtime = get_runtime()
@@ -232,12 +349,25 @@ def render() -> None:
             "**Wipe** drops every row for a given symbol + timeframe.\n\n" + cred_hint
         )
         with gr.Row():
-            symbol_input = gr.Textbox(value=default_symbol, label="Symbol")
+            symbol_input = gr.Dropdown(
+                choices=_initial_symbol_choices(default_symbol),
+                value=default_symbol,
+                label="Symbol",
+                allow_custom_value=True,
+            )
             timeframe_input = gr.Dropdown(
                 choices=_SUPPORTED_TIMEFRAMES,
                 value="1h",
                 label="Timeframe",
             )
+        with gr.Row():
+            refresh_symbols_btn = gr.Button("Refresh symbols from Revolut X", variant="secondary")
+            symbols_status = gr.Markdown()
+        refresh_symbols_btn.click(
+            fn=refresh_symbols,
+            inputs=[symbol_input],
+            outputs=[symbol_input, symbols_status],
+        )
 
         gr.Markdown("### Backfill from `/candles/{symbol}`")
         with gr.Row():
@@ -251,8 +381,26 @@ def render() -> None:
             outputs=[backfill_output],
         )
 
-        gr.Markdown("### Inspect")
-        refresh_btn = gr.Button("How many candles are stored?")
+        gr.Markdown(
+            "### Database overview\n"
+            "One row per `(symbol, timeframe)` currently in the OHLCV "
+            "table — useful to confirm a backfill landed and to spot gaps."
+        )
+        overview_btn = gr.Button("Refresh database overview")
+        overview_output = gr.Dataframe(
+            value=pd.DataFrame(
+                columns=["Symbol", "Timeframe", "Candles", "Earliest (UTC)", "Latest (UTC)"]
+            ),
+            label="Stored OHLCV",
+            interactive=False,
+        )
+        overview_btn.click(fn=database_overview, inputs=[], outputs=[overview_output])
+
+        gr.Markdown(
+            "### Inspect a single pair\n"
+            "Quick count of candles for the symbol + timeframe selected above."
+        )
+        refresh_btn = gr.Button("Count candles for selected pair")
         counts_output = gr.Markdown()
         refresh_btn.click(
             fn=refresh_counts,
