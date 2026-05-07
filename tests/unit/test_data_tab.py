@@ -187,6 +187,50 @@ class TestDatabaseOverview:
         assert "3 candles" in out
 
 
+class TestDbDiagnostics:
+    @pytest.mark.asyncio
+    async def test_logs_pragmas_and_row_counts(self) -> None:
+        runtime = _install_runtime(_settings())
+        repo = OHLCVRepository(runtime.session_factory)
+        from cryptrink.cli.utils import init_db_schema
+
+        await init_db_schema(runtime.session_factory)
+        await repo.save_batch(
+            [
+                {
+                    "symbol": "BTC-EUR",
+                    "timeframe": "1h",
+                    "timestamp": 1_700_000_000_000 + i * 3_600_000,
+                    "open": Decimal("100"),
+                    "high": Decimal("110"),
+                    "low": Decimal("90"),
+                    "close": Decimal("105"),
+                    "volume": Decimal("1"),
+                }
+                for i in range(2)
+            ]
+        )
+
+        out = await data_tab.db_diagnostics()
+        assert "diagnostics: starting" in out
+        assert "diagnostics: COMPLETE" in out
+        # PRAGMAs we care about must appear with their values.
+        for key in ("journal_mode", "synchronous", "page_count", "freelist_count"):
+            assert f"PRAGMA {key} =" in out
+        # Per-pair row count surfaces in the same log.
+        assert "BTC-EUR" in out
+        assert "2 candles" in out
+
+    @pytest.mark.asyncio
+    async def test_force_checkpoint_runs_pragmas(self) -> None:
+        _install_runtime(_settings())
+        out = await data_tab.force_checkpoint()
+        assert "checkpoint: starting" in out
+        assert "checkpoint: COMPLETE" in out
+        assert "PRAGMA wal_checkpoint(FULL)" in out
+        assert "PRAGMA optimize" in out
+
+
 class TestWipe:
     @pytest.mark.asyncio
     async def test_requires_typed_confirm(self) -> None:

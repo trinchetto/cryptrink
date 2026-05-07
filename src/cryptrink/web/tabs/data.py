@@ -379,6 +379,135 @@ async def refresh_counts(symbol: str, timeframe: str) -> str:
     )
 
 
+async def db_diagnostics() -> str:
+    """Dump SQLite PRAGMAs + file metadata + per-pair row counts.
+
+    Useful when the operator suspects data has been silently lost
+    across restarts (typically due to HF Storage Bucket replication
+    timing or out-of-band file corruption). The output explicitly
+    lists journal mode, sync setting, page accounting, and any sidecar
+    files (.db-wal, .db-shm, .db-journal) that might hold uncommitted
+    state.
+    """
+    _emit("diagnostics: starting")
+    runtime = get_runtime()
+    started = time.perf_counter()
+    await init_db_schema(runtime.session_factory)
+
+    db_url = runtime.settings.database.url
+    path = _sqlite_file_path(db_url)
+
+    # --- PRAGMAs ------------------------------------------------------
+    pragma_keys = [
+        "journal_mode",
+        "synchronous",
+        "auto_vacuum",
+        "page_size",
+        "page_count",
+        "freelist_count",
+        "wal_autocheckpoint",
+        "user_version",
+    ]
+    async with runtime.session_factory() as session:
+        from sqlalchemy import text
+
+        for key in pragma_keys:
+            try:
+                result = await session.execute(text(f"PRAGMA {key}"))
+                row = result.first()
+                value = row[0] if row else "<none>"
+            except Exception as exc:
+                value = f"<error: {type(exc).__name__}: {exc}>"
+            _emit(f"  PRAGMA {key} = {value}")
+
+    # --- File + sidecar accounting -----------------------------------
+    if path is not None:
+        if path.exists():
+            size_mb = path.stat().st_size / (1024 * 1024)
+            _emit(f"  main db: `{path}` is {size_mb:.2f} MB")
+        else:
+            _emit(f"  main db: `{path}` does not exist")
+        for suffix, label in (
+            ("-wal", "WAL log"),
+            ("-shm", "shared-memory index"),
+            ("-journal", "rollback journal"),
+        ):
+            sidecar = Path(str(path) + suffix)
+            # Sync filesystem stat in an async ctx is fine for a one-shot
+            # diagnostic that touches at most three files on local disk.
+            if sidecar.exists():  # noqa: ASYNC240
+                sc_size_mb = sidecar.stat().st_size / (1024 * 1024)  # noqa: ASYNC240
+                _emit(
+                    f"  {label}: `{sidecar.name}` is {sc_size_mb:.2f} MB "
+                    "— uncommitted state may live here"
+                )
+    else:
+        _emit(f"  db url is {db_url} (not a sqlite file)")
+
+    # --- Row counts (the operator's actual question) -----------------
+    async with runtime.session_factory() as session:
+        stmt = (
+            select(
+                OHLCVModel.symbol,
+                OHLCVModel.timeframe,
+                func.count().label("candle_count"),
+                func.min(OHLCVModel.timestamp).label("earliest"),
+                func.max(OHLCVModel.timestamp).label("latest"),
+            )
+            .group_by(OHLCVModel.symbol, OHLCVModel.timeframe)
+            .order_by(OHLCVModel.symbol, OHLCVModel.timeframe)
+        )
+        rows = list((await session.execute(stmt)).all())
+
+    if not rows:
+        _emit("  ohlcv: 0 (symbol, timeframe) groups")
+    else:
+        _emit(f"  ohlcv: {len(rows)} (symbol, timeframe) groups")
+        for row in rows:
+            earliest = datetime.fromtimestamp(int(row.earliest) / 1000, tz=UTC)
+            latest = datetime.fromtimestamp(int(row.latest) / 1000, tz=UTC)
+            _emit(
+                f"    {row.symbol:<10} {row.timeframe:<4} "
+                f"{int(row.candle_count):>6} candles  "
+                f"{earliest.isoformat(timespec='seconds')} → "
+                f"{latest.isoformat(timespec='seconds')}"
+            )
+
+    return _emit(f"diagnostics: COMPLETE in {_format_elapsed(started)}")
+
+
+async def force_checkpoint() -> str:
+    """Force-flush any pending SQLite state to the main .db file.
+
+    Defensive button for HF Spaces where the Storage Bucket may
+    asynchronously replicate the mount: clicking this before manually
+    restarting the Space increases the chance that all written rows
+    are durable in the bucket. Calls ``PRAGMA wal_checkpoint(FULL)``
+    (no-op when not in WAL mode) and ``PRAGMA optimize`` so the file
+    layout is in a clean state.
+    """
+    _emit("checkpoint: starting")
+    runtime = get_runtime()
+    started = time.perf_counter()
+    await init_db_schema(runtime.session_factory)
+
+    async with runtime.session_factory() as session:
+        from sqlalchemy import text
+
+        for cmd in ("PRAGMA wal_checkpoint(FULL)", "PRAGMA optimize"):
+            try:
+                await session.execute(text(cmd))
+                _emit(f"  ran {cmd}")
+            except Exception as exc:
+                _emit(f"  {cmd} failed: {type(exc).__name__}: {exc}")
+        await session.commit()
+
+    return _emit(
+        f"checkpoint: COMPLETE in {_format_elapsed(started)} "
+        f"({_format_db_size(runtime.settings.database.url)})"
+    )
+
+
 async def database_overview() -> str:
     """Log a per-(symbol, timeframe) summary plus DB file size."""
     _emit("overview: starting")
@@ -527,6 +656,8 @@ def render() -> None:
             refresh_symbols_btn = gr.Button("Refresh symbols", variant="secondary")
 
         with gr.Row():
+            diagnostics_btn = gr.Button("DB diagnostics")
+            checkpoint_btn = gr.Button("Force checkpoint")
             confirm_input = gr.Textbox(value="", label="Type DELETE to enable wipe")
             wipe_btn = gr.Button("Wipe", variant="stop")
             clear_btn = gr.Button("Clear log")
@@ -555,3 +686,5 @@ def render() -> None:
             outputs=[terminal],
         )
         clear_btn.click(fn=clear_log, inputs=[], outputs=[terminal])
+        diagnostics_btn.click(fn=db_diagnostics, inputs=[], outputs=[terminal])
+        checkpoint_btn.click(fn=force_checkpoint, inputs=[], outputs=[terminal])
