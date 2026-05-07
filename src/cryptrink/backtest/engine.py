@@ -193,7 +193,11 @@ class BacktestEngine:
         )
 
         # 4. Convert to DataFrame once; per-candle context slices a rolling
-        #    window from this single frame.
+        #    window from this single frame. The DataFrame is built with a
+        #    datetime index so strategy contexts and the equity curve have
+        #    real per-candle timestamps (HistoricalDataFeed yields raw int
+        #    ms — without the conversion below the equity curve would all
+        #    stamp at datetime.now() and render as a flat right-edge line).
         df = self._build_dataframe(ohlcv_data)
 
         # 5. Record initial equity
@@ -205,8 +209,8 @@ class BacktestEngine:
         #    and execution.
         for current_index, candle in enumerate(ohlcv_data):
             # Skip lookback period (indicators need historical data)
-            candle_ts = candle["timestamp"]
-            if isinstance(candle_ts, datetime) and candle_ts < start_time:
+            candle_ts = self._coerce_candle_datetime(candle["timestamp"])
+            if candle_ts < start_time:
                 continue
 
             context = self._build_strategy_context(
@@ -219,14 +223,13 @@ class BacktestEngine:
             await self._engine.process_signal(
                 symbol=symbol,
                 current_price=Decimal(str(candle["close"])),
-                timestamp=candle_ts if isinstance(candle_ts, datetime) else datetime.now(UTC),
+                timestamp=candle_ts,
                 signal=signal,
             )
 
             # Record equity at this point
             current_equity = self._executor.balance
-            candle_time = candle_ts if isinstance(candle_ts, datetime) else datetime.now(UTC)
-            self._equity_curve.append((candle_time, current_equity))
+            self._equity_curve.append((candle_ts, current_equity))
 
         # 7. Close any open positions at end
         final_price = Decimal(str(ohlcv_data[-1]["close"]))
@@ -317,10 +320,11 @@ class BacktestEngine:
                 :class:`HistoricalDataFeed` output).
 
         Returns:
-            DataFrame with columns: timestamp, open, high, low, close, volume.
+            DataFrame indexed by ``datetime`` with columns ``open``, ``high``,
+            ``low``, ``close``, ``volume`` as floats.
         """
         data = {
-            "timestamp": [candle["timestamp"] for candle in ohlcv_data],
+            "timestamp": [self._coerce_candle_datetime(c["timestamp"]) for c in ohlcv_data],
             "open": [float(candle["open"]) for candle in ohlcv_data],  # type: ignore[arg-type]
             "high": [float(candle["high"]) for candle in ohlcv_data],  # type: ignore[arg-type]
             "low": [float(candle["low"]) for candle in ohlcv_data],  # type: ignore[arg-type]
@@ -332,6 +336,24 @@ class BacktestEngine:
         df.set_index("timestamp", inplace=True)
 
         return df
+
+    @staticmethod
+    def _coerce_candle_datetime(value: object) -> datetime:
+        """Normalise a candle timestamp to a UTC ``datetime``.
+
+        :class:`~cryptrink.data.feed.HistoricalDataFeed` returns the raw int
+        milliseconds straight off the OHLCV row, while tests sometimes pass
+        ``datetime`` objects directly. Either is acceptable; everything
+        downstream — the rolling DataFrame index, the equity curve, the
+        signal that flows into :class:`TradingEngine` — needs a real
+        timezone-aware datetime.
+        """
+        if isinstance(value, datetime):
+            return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+        if isinstance(value, (int, float)):
+            return datetime.fromtimestamp(int(value) / 1000, tz=UTC)
+        msg = f"Unsupported candle timestamp type: {type(value).__name__}"
+        raise TypeError(msg)
 
     def _build_strategy_context(
         self,

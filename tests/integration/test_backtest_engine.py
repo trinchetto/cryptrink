@@ -696,3 +696,113 @@ class TestRealStrategyIntegration:
         assert result.symbol == "BTC-USD"
         assert result.initial_balance == Decimal("10000")
         assert len(result.equity_curve) > 0
+
+
+class TestBacktestEngineTimestampHandling:
+    """Regression tests for the candle-timestamp coercion.
+
+    The production :class:`HistoricalDataFeed` returns ``timestamp`` as a
+    raw int (milliseconds since epoch). The engine must coerce these into
+    UTC ``datetime`` objects for the equity curve and for the strategy
+    context. A previous bug used ``isinstance(candle_ts, datetime)`` which
+    silently failed against ints — every equity curve entry stamped at
+    ``datetime.now()`` and rendered as a flat right-edge line.
+    """
+
+    @pytest.fixture
+    def int_ms_data_feed(self):
+        """Build a feed that yields candles with raw int-ms timestamps.
+
+        Mirrors :class:`HistoricalDataFeed` in production, which returns
+        ``record.timestamp`` (an int) directly off the OHLCV table.
+        """
+        start = datetime(2024, 1, 1, tzinfo=UTC)
+        candles = []
+        for i in range(72):  # 3 days of 1h candles
+            ts = start + timedelta(hours=i)
+            base = Decimal("50000") + Decimal(str(i * 10))
+            candles.append(
+                {
+                    "symbol": "BTC-USD",
+                    "timeframe": "1h",
+                    "timestamp": int(ts.timestamp() * 1000),  # raw int ms
+                    "open": base,
+                    "high": base + Decimal("100"),
+                    "low": base - Decimal("50"),
+                    "close": base + Decimal("50"),
+                    "volume": Decimal("100"),
+                }
+            )
+
+        class IntMsDataFeed:
+            def __init__(self, data):
+                self._data = data
+
+            async def get_ohlcv(
+                self,
+                symbol: str,
+                timeframe: str,
+                start_time: datetime,
+                end_time: datetime,
+            ) -> list[dict[str, object]]:
+                start_ms = int(start_time.timestamp() * 1000)
+                end_ms = int(end_time.timestamp() * 1000)
+                return [c for c in self._data if start_ms <= int(c["timestamp"]) <= end_ms]
+
+        return IntMsDataFeed(candles)
+
+    @pytest.mark.asyncio
+    async def test_equity_curve_uses_real_per_candle_timestamps(self, int_ms_data_feed):
+        """Each equity-curve entry must be stamped at its candle, not now."""
+        strategy = AlwaysHoldStrategy()
+        engine = BacktestEngine(
+            strategy=strategy,
+            data_feed=int_ms_data_feed,
+            initial_balance=Decimal("10000"),
+        )
+
+        result = await engine.run(
+            symbol="BTC-USD",
+            start_time=datetime(2024, 1, 1, tzinfo=UTC),
+            end_time=datetime(2024, 1, 3, tzinfo=UTC),
+            timeframe="1h",
+            lookback_periods=10,
+        )
+
+        assert len(result.equity_curve) >= 24  # at least one in-window day
+        timestamps = [ts for ts, _ in result.equity_curve]
+        # Every entry must be timezone-aware datetime in 2024 — not the
+        # fall-back datetime.now() that the previous bug produced.
+        for ts in timestamps:
+            assert isinstance(ts, datetime)
+            assert ts.tzinfo is not None
+            assert ts.year == 2024
+        # The curve must span more than a few microseconds (the bug compressed
+        # all entries to within a few ms of each other).
+        span = timestamps[-1] - timestamps[0]
+        assert span.total_seconds() > 60 * 60  # > 1 hour
+
+    @pytest.mark.asyncio
+    async def test_lookback_skip_works_with_int_ms_timestamps(self, int_ms_data_feed):
+        """Lookback candles must be skipped — the equity curve must not
+        contain any entries before ``start_time``. Previously the
+        ``isinstance(candle_ts, datetime)`` check silently let lookback
+        candles through because their timestamps were ints."""
+        strategy = AlwaysHoldStrategy()
+        engine = BacktestEngine(
+            strategy=strategy,
+            data_feed=int_ms_data_feed,
+            initial_balance=Decimal("10000"),
+        )
+        start_time = datetime(2024, 1, 2, tzinfo=UTC)
+        result = await engine.run(
+            symbol="BTC-USD",
+            start_time=start_time,
+            end_time=datetime(2024, 1, 3, tzinfo=UTC),
+            timeframe="1h",
+            lookback_periods=10,
+        )
+        # Only the seed entry at start_time may equal start_time exactly;
+        # every other entry must be at or after start_time.
+        for ts, _ in result.equity_curve:
+            assert ts >= start_time
