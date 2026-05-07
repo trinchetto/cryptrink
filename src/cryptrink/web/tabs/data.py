@@ -37,10 +37,24 @@ from cryptrink.data.storage import OHLCVRepository
 from cryptrink.web.live_setup import has_revolutx_credentials
 from cryptrink.web.state import (
     default_symbol,
+    flush_runtime,
     get_runtime,
     get_symbol_choices,
     set_cached_symbols,
 )
+
+# Browser-side confirm() so Wipe doesn't require a typed marker. If the
+# operator clicks Cancel, the JS throws and Gradio aborts the call —
+# the Python handler never runs, the terminal is unchanged.
+_WIPE_CONFIRM_JS = """
+(symbol, timeframe) => {
+  const msg = `Wipe all OHLCV rows for ${symbol} ${timeframe}?\\n\\nThis cannot be undone.`;
+  if (!confirm(msg)) {
+    throw new Error('wipe cancelled by user');
+  }
+  return [symbol, timeframe];
+}
+"""
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -329,15 +343,29 @@ async def backfill(
         f"backfill: persisted {saved} candles in {_format_elapsed(persist_started)} "
         f"(total stored for {symbol} {timeframe}: {total})"
     )
+
+    # Force-close all SQLite connections so the underlying file is
+    # released to the OS. On FUSE-backed mounts (HF Spaces Storage
+    # Bucket) this is the trigger the bucket usually needs to replicate
+    # the latest .db file.
+    yield _emit("backfill: flushing engine to release file handles for bucket sync…")
+    flush_started = time.perf_counter()
+    await flush_runtime()
+    yield _emit(f"backfill: flush done ({_format_elapsed(flush_started)})")
+
     yield _emit(f"backfill: COMPLETE ({_format_db_size(runtime.settings.database.url)})")
 
 
-async def wipe(symbol: str, timeframe: str, confirm: str) -> str:
-    """Delete every OHLCV row for ``(symbol, timeframe)`` and log the outcome."""
+async def wipe(symbol: str, timeframe: str) -> str:
+    """Delete every OHLCV row for ``(symbol, timeframe)`` and log the outcome.
+
+    Confirmation is gated browser-side via ``_WIPE_CONFIRM_JS``: if the
+    operator clicks Cancel in the confirm dialog, the Gradio click is
+    aborted before this Python handler runs, so we don't need a
+    typed-DELETE input here.
+    """
     if not symbol:
         return _emit_failure("wipe: symbol is empty")
-    if confirm.strip() != "DELETE":
-        return _emit_failure("wipe: type DELETE in the confirm box to proceed")
 
     _emit(f"wipe: starting for {symbol} {timeframe}")
     runtime = get_runtime()
@@ -357,6 +385,10 @@ async def wipe(symbol: str, timeframe: str, confirm: str) -> str:
         )
         await session.execute(delete_stmt)
         await session.commit()
+
+    # Same bucket-flush rationale as backfill — release file handles so
+    # the FUSE mount can replicate the deletion.
+    await flush_runtime()
 
     return _emit(
         f"wipe: COMPLETE — deleted {deleted} rows for {symbol} {timeframe} "
@@ -658,8 +690,7 @@ def render() -> None:
         with gr.Row():
             diagnostics_btn = gr.Button("DB diagnostics")
             checkpoint_btn = gr.Button("Force checkpoint")
-            confirm_input = gr.Textbox(value="", label="Type DELETE to enable wipe")
-            wipe_btn = gr.Button("Wipe", variant="stop")
+            wipe_btn = gr.Button("Wipe (with confirm)", variant="stop")
             clear_btn = gr.Button("Clear log")
 
         terminal = gr.Markdown(value=_render_terminal(), label="Terminal")
@@ -682,8 +713,9 @@ def render() -> None:
         )
         wipe_btn.click(
             fn=wipe,
-            inputs=[symbol_input, timeframe_input, confirm_input],
+            inputs=[symbol_input, timeframe_input],
             outputs=[terminal],
+            js=_WIPE_CONFIRM_JS,
         )
         clear_btn.click(fn=clear_log, inputs=[], outputs=[terminal])
         diagnostics_btn.click(fn=db_diagnostics, inputs=[], outputs=[terminal])

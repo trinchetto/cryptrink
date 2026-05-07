@@ -86,3 +86,33 @@ def default_symbol() -> str:
     """Convenience: the symbol every tab's dropdown should select by default."""
     choices = get_symbol_choices()
     return choices[0] if choices else "BTC-EUR"
+
+
+async def flush_runtime() -> None:
+    """Dispose the runtime's SQLite engine and rebuild the session factory.
+
+    SQLAlchemy's async engine pools connections internally. With a
+    long-lived session factory those connections stay open across
+    operations, which means the underlying ``.db`` file is never
+    "closed" from the OS's point of view — and on FUSE-backed mounts
+    like the HF Spaces Storage Bucket, that delays bucket replication
+    until the next idle period.
+
+    Calling this after a major write (backfill, wipe) does the
+    minimum the operator can do from cryptrink to encourage the
+    bucket to replicate before they restart the Space:
+
+    1. Replace the runtime's :attr:`WebRuntime.session_factory` with a
+       fresh one (so concurrent / subsequent callers can immediately
+       open new connections without racing).
+    2. Await ``engine.dispose()`` on the old engine, which closes the
+       pool and releases all sqlite file handles.
+
+    Any caller that grabbed the old factory before step 1 will keep
+    using it until they're done — ``dispose()`` waits for those
+    operations to drain.
+    """
+    runtime = get_runtime()
+    old_engine = runtime.session_factory.kw["bind"]
+    runtime.session_factory = build_session_factory(runtime.settings.database.url)
+    await old_engine.dispose()

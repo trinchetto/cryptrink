@@ -233,11 +233,14 @@ class TestDbDiagnostics:
 
 class TestWipe:
     @pytest.mark.asyncio
-    async def test_requires_typed_confirm(self) -> None:
+    async def test_empty_symbol_logs_failure(self) -> None:
+        """Browser confirmation dialog gates user intent now; the
+        Python handler still validates that a symbol was provided
+        because gr.Dropdown can technically pass an empty string."""
         _install_runtime(_settings())
-        out = await data_tab.wipe("BTC-EUR", "1h", "")
+        out = await data_tab.wipe("", "1h")
         assert "FAILED" in out
-        assert "type DELETE" in out
+        assert "symbol is empty" in out
 
     @pytest.mark.asyncio
     async def test_logs_started_and_completed_with_count(self) -> None:
@@ -262,7 +265,7 @@ class TestWipe:
             ]
         )
 
-        out = await data_tab.wipe("BTC-EUR", "1h", "DELETE")
+        out = await data_tab.wipe("BTC-EUR", "1h")
         assert "wipe: starting" in out
         assert "wipe: COMPLETE" in out
         assert "deleted 2 rows" in out

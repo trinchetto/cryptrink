@@ -21,6 +21,8 @@ from cryptrink.web import state as web_state
 from cryptrink.web.state import (
     WebRuntime,
     default_symbol,
+    flush_runtime,
+    get_runtime,
     get_symbol_choices,
     reset_runtime,
     set_cached_symbols,
@@ -93,3 +95,42 @@ class TestSetCachedSymbols:
         set_cached_symbols(source)
         source.append("evil")
         assert runtime.cached_symbols == ["BTC-EUR", "ETH-EUR"]
+
+
+class TestFlushRuntime:
+    @pytest.mark.asyncio
+    async def test_replaces_session_factory_and_disposes_old_engine(self) -> None:
+        """Disposing the old engine + rebuilding the factory is the
+        operator's primary "encourage the bucket to sync" lever after
+        a write. The runtime must still work for follow-up reads after
+        the flush — regression test for breakage there."""
+        runtime = _install_runtime(symbols=["BTC-EUR"])
+        old_factory = runtime.session_factory
+        old_engine = old_factory.kw["bind"]
+
+        await flush_runtime()
+
+        # Factory is replaced and the old engine is disposed.
+        assert runtime.session_factory is not old_factory
+        assert runtime.session_factory.kw["bind"] is not old_engine
+        # The new factory must be functional — open a session and run a
+        # trivial query so we know the engine is wired.
+        async with runtime.session_factory() as session:
+            from sqlalchemy import text
+
+            result = await session.execute(text("SELECT 1"))
+            assert result.scalar_one() == 1
+
+    @pytest.mark.asyncio
+    async def test_flush_is_safe_on_a_freshly_initialised_runtime(self) -> None:
+        """Even with no operations between init and flush, the helper
+        must not raise (operator might click DB diagnostics + flush
+        before any backfill)."""
+        _install_runtime()
+        await flush_runtime()
+        runtime = get_runtime()
+        # Subsequent reads still work.
+        async with runtime.session_factory() as session:
+            from sqlalchemy import text
+
+            assert (await session.execute(text("SELECT 2"))).scalar_one() == 2
