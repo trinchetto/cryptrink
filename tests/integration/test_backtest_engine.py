@@ -62,9 +62,13 @@ class DummyDataFeed:
         timeframe: str,
         start_time: datetime,
         end_time: datetime,
+        limit: int | None = None,
     ) -> list[dict[str, object]]:
         """Return filtered OHLCV data."""
-        return [candle for candle in self._data if start_time <= candle["timestamp"] <= end_time]
+        rows = [c for c in self._data if start_time <= c["timestamp"] <= end_time]
+        if limit is not None:
+            rows = rows[:limit]
+        return rows
 
 
 class AlwaysHoldStrategy(BaseStrategy):
@@ -744,10 +748,14 @@ class TestBacktestEngineTimestampHandling:
                 timeframe: str,
                 start_time: datetime,
                 end_time: datetime,
+                limit: int | None = None,
             ) -> list[dict[str, object]]:
                 start_ms = int(start_time.timestamp() * 1000)
                 end_ms = int(end_time.timestamp() * 1000)
-                return [c for c in self._data if start_ms <= int(c["timestamp"]) <= end_ms]
+                rows = [c for c in self._data if start_ms <= int(c["timestamp"]) <= end_ms]
+                if limit is not None:
+                    rows = rows[:limit]
+                return rows
 
         return IntMsDataFeed(candles)
 
@@ -806,3 +814,78 @@ class TestBacktestEngineTimestampHandling:
         # every other entry must be at or after start_time.
         for ts, _ in result.equity_curve:
             assert ts >= start_time
+
+
+class TestBacktestEngineDataLimit:
+    """Regression: BacktestEngine must request *all* candles in the window.
+
+    :class:`HistoricalDataFeed.get_ohlcv` defaults to ``limit=100``. A
+    backtest that asks for "all rows in this window" but doesn't pass a
+    larger limit silently truncates to the first 100 candles — usually
+    100% lookback, leaving the strategy with no in-window data and the
+    user staring at a flat equity curve and a "100 hold" signal log.
+    This regression test pins the explicit-limit fix in place.
+    """
+
+    @pytest.mark.asyncio
+    async def test_engine_requests_more_than_default_100_candles(self):
+        """The engine must override the data_feed's default limit so it
+        gets the full window, not just the first 100 candles."""
+        observed_limits: list[int | None] = []
+
+        class CapturingFeed:
+            def __init__(self, candles: list[dict[str, object]]):
+                self._candles = candles
+
+            async def get_ohlcv(
+                self,
+                symbol: str,
+                timeframe: str,
+                start_time: datetime,
+                end_time: datetime,
+                limit: int | None = None,
+            ) -> list[dict[str, object]]:
+                observed_limits.append(limit)
+                # Match HistoricalDataFeed's default behaviour: if no limit
+                # is passed, cap at 100 to prove the caller MUST pass one.
+                effective_limit = limit if limit is not None else 100
+                rows = [c for c in self._candles if start_time <= c["timestamp"] <= end_time]
+                return rows[:effective_limit]
+
+        # 500 hourly candles — well over the 100-default cap.
+        start = datetime(2024, 1, 1, tzinfo=UTC)
+        candles = [
+            {
+                "symbol": "BTC-USD",
+                "timeframe": "1h",
+                "timestamp": start + timedelta(hours=i),
+                "open": Decimal("100"),
+                "high": Decimal("105"),
+                "low": Decimal("95"),
+                "close": Decimal("100"),
+                "volume": Decimal("1"),
+            }
+            for i in range(500)
+        ]
+        feed = CapturingFeed(candles)
+
+        engine = BacktestEngine(
+            strategy=AlwaysHoldStrategy(),
+            data_feed=feed,
+            initial_balance=Decimal("10000"),
+        )
+        result = await engine.run(
+            symbol="BTC-USD",
+            start_time=start,
+            end_time=start + timedelta(hours=499),
+            timeframe="1h",
+            lookback_periods=50,
+        )
+        # The engine made exactly one get_ohlcv call and passed an
+        # explicit limit large enough to swallow the whole window.
+        assert len(observed_limits) == 1
+        assert observed_limits[0] is not None
+        assert observed_limits[0] > 500
+        # And the result reflects the full window — not 100 candles.
+        # 500 in-window + initial seed = 501 entries.
+        assert len(result.equity_curve) > 100

@@ -165,12 +165,16 @@ class BacktestEngine:
         # 2. Calculate lookback start time
         lookback_start = self._calculate_lookback_start(start_time, timeframe, lookback_periods)
 
-        # 3. Load historical OHLCV data
+        # 3. Load historical OHLCV data. Pass an explicit, large ``limit``
+        #    because :meth:`HistoricalDataFeed.get_ohlcv` defaults to 100 —
+        #    a backtest that asks for "all rows in this window" must not
+        #    silently truncate to the first 100 lookback candles.
         ohlcv_data = await self._data_feed.get_ohlcv(
             symbol=symbol,
             timeframe=timeframe,
             start_time=lookback_start,
             end_time=end_time,
+            limit=10_000_000,
         )
 
         if not ohlcv_data:

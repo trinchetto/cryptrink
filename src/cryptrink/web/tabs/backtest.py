@@ -182,6 +182,33 @@ async def refresh_datasets(current: str | None) -> tuple[object, str]:
     return gr.update(choices=choices, value=new_value), log
 
 
+async def autofill_dates(dataset_value: str | None) -> tuple[object, object]:
+    """Set Start/End to the dataset's earliest/latest dates.
+
+    Wired to the Dataset dropdown's ``change`` event. Picking a dataset
+    snaps the date inputs to "everything we have", which is the default
+    most operators want — running a strategy over the full available
+    history. The operator can still narrow the window manually.
+    """
+    if not dataset_value:
+        return gr.update(), gr.update()
+    try:
+        symbol, timeframe = Dataset.parse(dataset_value)
+    except ValueError:
+        return gr.update(), gr.update()
+
+    datasets = await list_datasets()
+    match = next(
+        (ds for ds in datasets if ds.symbol == symbol and ds.timeframe == timeframe),
+        None,
+    )
+    if match is None:
+        return gr.update(), gr.update()
+    start_str = match.earliest.date().isoformat()
+    end_str = match.latest.date().isoformat()
+    return gr.update(value=start_str), gr.update(value=end_str)
+
+
 # ----------------------------------------------------------------------
 # Run handler (streaming)
 # ----------------------------------------------------------------------
@@ -435,10 +462,36 @@ def _format_summary(result: BacktestResult) -> str:
     )
 
 
+# Maximum points rendered per chart. ``gr.LinePlot`` becomes unreadable
+# (illegible x-axis labels, slow render) much past this — a 4-month 1m
+# backfill is ~170k candles, so subsampling is non-optional. The number
+# is chosen empirically: dense enough to show shape, sparse enough that
+# every label fits.
+_PLOT_MAX_POINTS = 500
+
+
+def _subsample(df: pd.DataFrame, max_points: int = _PLOT_MAX_POINTS) -> pd.DataFrame:
+    """Stride-subsample ``df`` to at most ``max_points`` rows.
+
+    Keeps the first and last row regardless of stride so the chart's
+    x-axis spans the full backtest window. Used only for plotting; the
+    backtest itself still runs over every candle.
+    """
+    if len(df) <= max_points:
+        return df
+    stride = max(1, len(df) // max_points)
+    sampled = df.iloc[::stride].copy()
+    # Append the last row if the stride dropped it — preserves end-of-window.
+    if not sampled.index.equals(df.iloc[[-1]].index) and df.index[-1] not in sampled.index:
+        sampled = pd.concat([sampled, df.iloc[[-1]]])
+    return sampled
+
+
 def _equity_dataframe(result: BacktestResult) -> pd.DataFrame:
     if not result.equity_curve:
         return pd.DataFrame(columns=["timestamp", "equity"])
-    return pd.DataFrame([{"timestamp": ts, "equity": float(eq)} for ts, eq in result.equity_curve])
+    df = pd.DataFrame([{"timestamp": ts, "equity": float(eq)} for ts, eq in result.equity_curve])
+    return _subsample(df)
 
 
 async def _candle_dataframe(
@@ -452,18 +505,19 @@ async def _candle_dataframe(
 
     We re-read from the repository (cheap on SQLite) rather than thread
     them through the engine result; the engine's responsibility is the
-    backtest, not the viz.
+    backtest, not the viz. The result is subsampled before returning so
+    the chart x-axis stays readable on multi-month windows.
     """
     records = await repository.get(
         symbol,
         timeframe,
         start_time=int(start_dt.timestamp() * 1000),
         end_time=int(end_dt.timestamp() * 1000),
-        limit=100_000,
+        limit=10_000_000,
     )
     if not records:
         return pd.DataFrame(columns=["timestamp", "close"])
-    return pd.DataFrame(
+    df = pd.DataFrame(
         [
             {
                 "timestamp": datetime.fromtimestamp(r.timestamp / 1000, tz=UTC),
@@ -472,6 +526,7 @@ async def _candle_dataframe(
             for r in records
         ]
     )
+    return _subsample(df)
 
 
 def _empty_trades_df() -> pd.DataFrame:
@@ -596,6 +651,15 @@ def render() -> None:
             fn=refresh_datasets,
             inputs=[dataset_input],
             outputs=[dataset_input, terminal],
+        )
+        # Snap Start / End to the dataset's full range whenever the
+        # operator picks a new dataset — that's the default they want
+        # 99% of the time. Manual narrowing still wins because they can
+        # edit the textboxes after.
+        dataset_input.change(
+            fn=autofill_dates,
+            inputs=[dataset_input],
+            outputs=[start_input, end_input],
         )
 
         run_btn.click(
