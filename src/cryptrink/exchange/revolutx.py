@@ -5,6 +5,7 @@ interface for the Revolut X cryptocurrency exchange.
 """
 
 import json
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -521,33 +522,76 @@ class RevolutXExchange(BaseExchange):
         candles.sort(key=lambda candle: candle["timestamp"])
         return candles
 
+    async def iter_candle_pages(
+        self,
+        symbol: str,
+        timeframe: str,
+        since_ms: int,
+        until_ms: int | None = None,
+        max_pages: int = 50,
+    ) -> AsyncIterator[list[dict[str, Any]]]:
+        """Async-iterate pages of candles backwards.
+
+        Each yielded page is the raw response from a single ``/candles``
+        call (no ``since_ms`` query param — Revolut X rejects requests
+        that would return more than 50,000 rows, so we always let the
+        API return its natural 5000-row window ending at ``until_ms``
+        and walk the cursor back ourselves).
+
+        The loop stops when (a) a page comes back empty, (b) the
+        earliest candle in a page is at or before ``since_ms``, or
+        (c) ``max_pages`` is reached. Caller is responsible for
+        deduplicating timestamps across pages.
+
+        Args:
+            symbol: Trading pair.
+            timeframe: Cryptrink timeframe string.
+            since_ms: Inclusive lower bound — pagination stops once a
+                page reaches at or before this timestamp.
+            until_ms: Inclusive upper bound; defaults to now.
+            max_pages: Hard cap on the number of HTTP calls the loop
+                will issue. Defaults to 50, which covers ~250k candles
+                — plenty for typical multi-year backfills at common
+                timeframes (e.g. 1h: ~17k/year, so 50 pages * 5000 ≈
+                14 years).
+        """
+        if until_ms is None:
+            until_ms = int(datetime.now(UTC).timestamp() * 1000)
+        if since_ms >= until_ms:
+            return
+
+        cursor = until_ms
+        for _ in range(max_pages):
+            page = await self.get_candles(
+                symbol=symbol,
+                timeframe=timeframe,
+                until_ms=cursor,
+                # since_ms intentionally omitted — see method docstring.
+            )
+            if not page:
+                return
+            yield page
+
+            earliest = page[0]["timestamp"]
+            if earliest <= since_ms:
+                return
+
+            cursor = earliest - 1
+
     async def backfill_candles(
         self,
         symbol: str,
         timeframe: str,
         since_ms: int,
         until_ms: int | None = None,
-        max_pages: int = 20,
+        max_pages: int = 50,
     ) -> list[dict[str, Any]]:
-        """Page :meth:`get_candles` backwards until the requested range is covered.
+        """Convenience wrapper around :meth:`iter_candle_pages`.
 
-        Each page returns up to 5000 candles ending at ``until_ms`` (or
-        the previous page's earliest candle on subsequent calls). The
-        loop terminates when (a) the API returns an empty page, (b) the
-        earliest candle in the latest page is at or before ``since_ms``,
-        or (c) ``max_pages`` is reached — whichever happens first.
-
-        Args:
-            symbol: Trading pair.
-            timeframe: Cryptrink timeframe string.
-            since_ms: Earliest timestamp the caller wants (inclusive).
-            until_ms: Latest timestamp; defaults to now.
-            max_pages: Hard cap on pagination iterations to bound the
-                request budget on a misbehaving server.
-
-        Returns:
-            Deduplicated, ascending-sorted list of OHLCV dicts covering
-            ``[since_ms, until_ms]`` to the extent the API exposes it.
+        Drains the page iterator, deduplicates candles by timestamp,
+        sorts ascending, and clips to ``[since_ms, until_ms]``. Use
+        :meth:`iter_candle_pages` directly when you want per-page
+        progress (the Data tab does this to stream backfill status).
         """
         if until_ms is None:
             until_ms = int(datetime.now(UTC).timestamp() * 1000)
@@ -556,33 +600,19 @@ class RevolutXExchange(BaseExchange):
 
         seen: set[int] = set()
         collected: list[dict[str, Any]] = []
-        cursor = until_ms
-
-        for _ in range(max_pages):
-            page = await self.get_candles(
-                symbol=symbol,
-                timeframe=timeframe,
-                since_ms=since_ms,
-                until_ms=cursor,
-            )
-            if not page:
-                break
-
-            new_in_page = 0
+        async for page in self.iter_candle_pages(
+            symbol=symbol,
+            timeframe=timeframe,
+            since_ms=since_ms,
+            until_ms=until_ms,
+            max_pages=max_pages,
+        ):
             for candle in page:
                 ts = candle["timestamp"]
                 if ts in seen:
                     continue
                 seen.add(ts)
                 collected.append(candle)
-                new_in_page += 1
-
-            earliest = page[0]["timestamp"]
-            if earliest <= since_ms or new_in_page == 0:
-                break
-
-            # Walk the cursor back so the next page covers the older window.
-            cursor = earliest - 1
 
         collected.sort(key=lambda candle: candle["timestamp"])
         return [c for c in collected if since_ms <= c["timestamp"] <= until_ms]

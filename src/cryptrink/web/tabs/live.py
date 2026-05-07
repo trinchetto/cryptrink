@@ -24,7 +24,7 @@ from cryptrink.strategies import registry as strategy_registry
 from cryptrink.strategies.base import SignalType
 from cryptrink.web.live_loop import LiveLoop, LiveLoopState, get_active_loop, set_active_loop
 from cryptrink.web.live_setup import LiveMode, build_live_components, has_revolutx_credentials
-from cryptrink.web.state import get_runtime
+from cryptrink.web.state import default_symbol, get_runtime, get_symbol_choices
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -298,7 +298,6 @@ def render() -> None:
         if runtime.settings.default_strategy in strategy_options
         else (strategy_options[0] if strategy_options else None)
     )
-    default_symbol = runtime.settings.symbols[0] if runtime.settings.symbols else "BTC-EUR"
     creds_present = has_revolutx_credentials(runtime.settings)
     default_mode = LiveMode.PAPER.value
     if creds_present:
@@ -331,7 +330,12 @@ def render() -> None:
                 value=default_strategy,
                 label="Strategy",
             )
-            symbol_input = gr.Textbox(value=default_symbol, label="Symbol")
+            symbol_input = gr.Dropdown(
+                choices=get_symbol_choices(),
+                value=default_symbol(),
+                label="Symbol",
+                allow_custom_value=True,
+            )
         with gr.Row():
             interval_input = gr.Number(value=60.0, label="Interval (seconds)", minimum=1)
             balance_input = gr.Number(value=10000.0, label="Initial paper balance (EUR)")
@@ -366,9 +370,11 @@ def render() -> None:
                 "credentials to confirm signing and authentication work."
             )
             with gr.Row():
-                test_symbol_input = gr.Textbox(
-                    value=default_symbol,
+                test_symbol_input = gr.Dropdown(
+                    choices=get_symbol_choices(),
+                    value=default_symbol(),
                     label="Probe symbol",
+                    allow_custom_value=True,
                     scale=2,
                 )
                 test_btn = gr.Button("Test live connection", variant="secondary")

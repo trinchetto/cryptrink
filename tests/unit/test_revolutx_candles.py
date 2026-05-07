@@ -124,7 +124,34 @@ class TestGetCandles:
         assert candles == []
 
 
-class TestBackfillCandles:
+class TestIterCandlePagesAndBackfill:
+    @pytest.mark.asyncio
+    async def test_per_page_call_omits_since_ms(self) -> None:
+        """Revolut X rejects single requests that would return more than
+        ~50,000 rows. Backfill MUST therefore page without ``since`` —
+        each page lets the API return its natural 5000-row window
+        ending at ``until``. Regression test for the user's reported
+        ``no Gradio error: too many rows`` issue."""
+        exchange = _exchange()
+        page = [
+            {"timestamp": 100, "symbol": "BTC-EUR", "timeframe": "1m"} | _ohlcv(),
+        ]
+        get_candles_mock = AsyncMock(side_effect=[page, []])
+
+        with patch.object(RevolutXExchange, "get_candles", new=get_candles_mock):
+            await exchange.backfill_candles(
+                symbol="BTC-EUR",
+                timeframe="1m",
+                since_ms=0,
+                until_ms=10_000,
+            )
+
+        for call in get_candles_mock.await_args_list:
+            assert "since_ms" not in call.kwargs, (
+                "backfill_candles must not pass since_ms to per-page calls "
+                "— Revolut X rejects ranges that would exceed 50k rows."
+            )
+
     @pytest.mark.asyncio
     async def test_walks_cursor_back_until_since_is_covered(self) -> None:
         """The loop should page successively older windows until the

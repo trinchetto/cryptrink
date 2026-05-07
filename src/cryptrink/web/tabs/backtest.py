@@ -16,7 +16,7 @@ from cryptrink.data.storage import OHLCVRepository
 from cryptrink.execution.models import Position
 from cryptrink.runtime import resolve_strategy
 from cryptrink.strategies import registry as strategy_registry
-from cryptrink.web.state import get_runtime
+from cryptrink.web.state import default_symbol, get_runtime, get_symbol_choices
 
 if TYPE_CHECKING:
     from cryptrink.backtest.result import BacktestResult
@@ -159,8 +159,6 @@ def render() -> None:
         if runtime.settings.default_strategy in strategy_options
         else (strategy_options[0] if strategy_options else None)
     )
-    default_symbol = runtime.settings.symbols[0] if runtime.settings.symbols else "BTC-EUR"
-
     with gr.Tab("Backtest"):
         gr.Markdown("Replay a strategy against historical OHLCV stored in the configured database.")
         with gr.Row():
@@ -169,7 +167,12 @@ def render() -> None:
                 value=default_strategy,
                 label="Strategy",
             )
-            symbol_input = gr.Textbox(value=default_symbol, label="Symbol")
+            symbol_input = gr.Dropdown(
+                choices=get_symbol_choices(),
+                value=default_symbol(),
+                label="Symbol",
+                allow_custom_value=True,
+            )
         with gr.Row():
             start_input = gr.Textbox(value="2024-01-01", label="Start (YYYY-MM-DD)")
             end_input = gr.Textbox(value="", label="End (YYYY-MM-DD, blank = now)")

@@ -1,14 +1,17 @@
-"""Tests for the Data tab's overview + symbol-refresh helpers.
+"""Tests for the Data tab's overview + symbol-refresh helpers + size formatter.
 
-The interactive button handlers use module-level singletons (the
-WebRuntime, the cached symbol list); we reset them between tests via
-fixture so each case starts from a known state.
+The tab handlers use the WebRuntime singleton; we install a fresh
+in-memory runtime per test via fixture so cases don't bleed state.
 """
 
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 import pytest
 from pydantic import SecretStr
@@ -32,22 +35,25 @@ from cryptrink.web.tabs import data as data_tab  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _isolate() -> None:
-    """Each test starts with a fresh in-memory DB + empty symbol cache."""
+    """Each test starts with a fresh in-memory DB and an empty symbol cache."""
     reset_runtime()
-    data_tab._cached_symbols = []
     yield
     reset_runtime()
-    data_tab._cached_symbols = []
 
 
-def _settings(*, api_key: str = "", private_key: str = "") -> Settings:
+def _settings(
+    *,
+    api_key: str = "",
+    private_key: str = "",
+    db_url: str = "sqlite+aiosqlite:///:memory:",
+) -> Settings:
     return Settings(
         revolutx=RevolutXSettings(
             api_key=SecretStr(api_key),
             private_key=SecretStr(private_key),
         ),
         risk=RiskSettings(),
-        database=DatabaseSettings(url="sqlite+aiosqlite:///:memory:"),
+        database=DatabaseSettings(url=db_url),
         notifications=NotificationSettings(),
     )
 
@@ -62,9 +68,10 @@ def _install_runtime(settings: Settings) -> WebRuntime:
 
 class TestDatabaseOverview:
     @pytest.mark.asyncio
-    async def test_empty_db_returns_empty_frame_with_columns(self) -> None:
+    async def test_empty_db_returns_size_markdown_and_empty_frame(self) -> None:
         _install_runtime(_settings())
-        df = await data_tab.database_overview()
+        size_md, df = await data_tab.database_overview()
+        assert "in-memory" in size_md
         assert df.empty
         assert list(df.columns) == [
             "Symbol",
@@ -77,7 +84,6 @@ class TestDatabaseOverview:
     @pytest.mark.asyncio
     async def test_groups_by_symbol_timeframe_and_reports_counts(self) -> None:
         runtime = _install_runtime(_settings())
-        # Seed a few candles across two pairs so the GROUP BY collapses them.
         repo = OHLCVRepository(runtime.session_factory)
         from cryptrink.cli.utils import init_db_schema
 
@@ -113,14 +119,37 @@ class TestDatabaseOverview:
             ]
         )
 
-        df = await data_tab.database_overview()
-        # Sorted by (symbol, timeframe).
+        _, df = await data_tab.database_overview()
         assert list(df["Symbol"]) == ["BTC-EUR", "ETH-EUR"]
         assert list(df["Timeframe"]) == ["1h", "5m"]
         assert list(df["Candles"]) == [3, 5]
-        # Earliest < Latest (string-compare works for ISO-8601).
         for _, row in df.iterrows():
             assert row["Earliest (UTC)"] < row["Latest (UTC)"]
+
+
+class TestFormatDbSize:
+    def test_in_memory_url_renders_explanatory_message(self) -> None:
+        result = data_tab._format_db_size("sqlite+aiosqlite:///:memory:")
+        assert "in-memory" in result
+
+    def test_non_sqlite_url_falls_back_gracefully(self) -> None:
+        result = data_tab._format_db_size("postgresql+asyncpg://user@host/db")
+        assert "not a sqlite file" in result
+
+    def test_missing_file_reports_does_not_exist(self, tmp_path: Path) -> None:
+        url = f"sqlite+aiosqlite:///{tmp_path / 'never_created.db'}"
+        result = data_tab._format_db_size(url)
+        assert "does not exist" in result
+
+    def test_existing_file_reports_size_in_mb(self, tmp_path: Path) -> None:
+        path = tmp_path / "existing.db"
+        path.write_bytes(b"x" * (2 * 1024 * 1024 + 12345))  # ~2.01 MB
+        url = f"sqlite+aiosqlite:///{path}"
+        result = data_tab._format_db_size(url)
+        # Two-decimal MB number, plus the path printed for the operator.
+        assert "MB" in result
+        assert str(path) in result
+        assert "2.0" in result  # 2.01 or 2.00 depending on float math
 
 
 class TestRefreshSymbols:
@@ -131,9 +160,12 @@ class TestRefreshSymbols:
             await data_tab.refresh_symbols("BTC-EUR")
 
     @pytest.mark.asyncio
-    async def test_loads_symbols_and_updates_dropdown(self) -> None:
-        _install_runtime(
-            _settings(api_key="abc", private_key="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+    async def test_loads_symbols_and_caches_on_runtime(self) -> None:
+        runtime = _install_runtime(
+            _settings(
+                api_key="abc",
+                private_key="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            )
         )
 
         live_symbols = ["BTC-EUR", "ETH-EUR", "SOL-EUR", "USDC-EUR"]
@@ -153,17 +185,19 @@ class TestRefreshSymbols:
         ):
             update, status = await data_tab.refresh_symbols("BTC-EUR")
 
-        # Dropdown choices are sorted, value preserved when still in the list.
         assert update["choices"] == sorted(live_symbols)
         assert update["value"] == "BTC-EUR"
         assert "Loaded" in status and "4" in status
-        # Module-level cache populated for follow-up renders.
-        assert data_tab._cached_symbols == sorted(live_symbols)
+        # The runtime cache is now populated; other tabs see this on reload.
+        assert runtime.cached_symbols == sorted(live_symbols)
 
     @pytest.mark.asyncio
     async def test_value_falls_back_to_first_when_current_missing(self) -> None:
         _install_runtime(
-            _settings(api_key="abc", private_key="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+            _settings(
+                api_key="abc",
+                private_key="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            )
         )
 
         live_symbols = ["BTC-EUR", "ETH-EUR"]
@@ -177,15 +211,15 @@ class TestRefreshSymbols:
         ):
             update, _ = await data_tab.refresh_symbols("DOGE-EUR")
 
-        # "DOGE-EUR" isn't returned by the exchange; the dropdown falls
-        # back to the first sorted symbol so the operator isn't stuck on
-        # an unselectable value.
         assert update["value"] == "BTC-EUR"
 
     @pytest.mark.asyncio
     async def test_empty_response_raises(self) -> None:
         _install_runtime(
-            _settings(api_key="abc", private_key="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+            _settings(
+                api_key="abc",
+                private_key="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            )
         )
         with (
             patch("cryptrink.exchange.revolutx.RevolutXExchange.connect", new=AsyncMock()),
@@ -197,26 +231,3 @@ class TestRefreshSymbols:
             pytest.raises(gr.Error, match="empty symbol list"),
         ):
             await data_tab.refresh_symbols("BTC-EUR")
-
-
-class TestInitialSymbolChoices:
-    def test_uses_cached_symbols_when_available(self) -> None:
-        data_tab._cached_symbols = ["BTC-EUR", "ETH-EUR", "SOL-EUR"]
-        _install_runtime(_settings())
-        assert data_tab._initial_symbol_choices("BTC-EUR") == [
-            "BTC-EUR",
-            "ETH-EUR",
-            "SOL-EUR",
-        ]
-
-    def test_falls_back_to_settings_symbols(self) -> None:
-        runtime = _install_runtime(_settings())
-        runtime.settings.symbols = ["BTC-EUR", "ETH-EUR"]
-        assert data_tab._initial_symbol_choices("BTC-EUR") == ["BTC-EUR", "ETH-EUR"]
-
-    def test_inserts_default_when_missing_from_settings(self) -> None:
-        runtime = _install_runtime(_settings())
-        runtime.settings.symbols = ["ETH-EUR"]
-        choices = data_tab._initial_symbol_choices("BTC-EUR")
-        assert choices[0] == "BTC-EUR"
-        assert "ETH-EUR" in choices
