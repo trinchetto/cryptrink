@@ -498,30 +498,100 @@ cryptrink history --limit 50 --status closed --orders
 
 ---
 
-## Phase 9: Packaging & Deployment
+## Phase 9: Hugging Face Spaces Deployment
 
-### Objectives
-Prepare for production deployment.
+### Pivot
+Phase 9 now targets Hugging Face Spaces as the single deployment surface
+instead of Docker / Cloud Run / GCE / Fly.io. The CLI from Phase 8 stays
+as the operator's local interface; the Space hosts the Gradio UI plus
+the optional live trading loop. This keeps cryptrink's "one place to
+run it" story aligned with the LLM-agent strategy work targeting
+ZeroGPU.
 
-### Deliverables
-- [ ] Finalize pyproject.toml for PyPI
-- [ ] Docker image optimization
-- [ ] Docker Compose for local development
-- [ ] Cloud deployment options:
-  - [ ] GCE VM guide
-  - [ ] Cloud Run guide
-  - [ ] Fly.io guide
-- [ ] GitHub Actions:
-  - [ ] CI/CD pipeline
-  - [ ] Automated releases
-- [ ] Production documentation
+The phase ships in three independently deployable sub-phases.
 
-### Files to Create
+### Phase 9a — Web shell on a CPU Space ✅
+
+A Gradio app exposes the existing rule-based strategies through a
+browser. No live trading, no LLM, no GPU.
+
+Delivered:
+- `app.py` at the repo root + HF Space metadata in `README.md` YAML
+  front-matter (`sdk: gradio`, `app_file: app.py`, `sdk_version: 6.x`).
+- `cryptrink.web` package: `build_demo()` and three tabs (Backtest,
+  Suggest, Status) reusing `BacktestEngine`, `SuggestExecutor`, and the
+  persistence repositories.
+- `cryptrink.runtime` shared module that bootstraps the strategy
+  registry and async session factory for both the CLI and the web app.
+- `requirements.txt` exported via `poetry export --extras web` so the
+  Space installs the same dep set.
+- `--all-extras` install in CI so the web layer is type-checked and
+  unit-tested in the lint and test jobs.
+
+Verification: `python app.py` opens the three-tab UI; the Space build
+on `huggingface.co/spaces/<owner>/cryptrink` runs the same UI on free
+CPU Basic hardware. Each tab returns either real data (against the
+configured DB) or a friendly missing-data message.
+
+### Phase 9b — Live tab + persistent storage ✅
+
+Adds the live trading control panel and the asyncio background loop
+on top of the 9a shell. Requires a paid CPU Space (so the process
+doesn't sleep) and a Storage Bucket mounted at `/data` for SQLite
+persistence.
+
+Delivered:
+- `cryptrink.web.live_loop.LiveLoop`: cancellable background task that
+  on every interval pulls OHLCV from the configured data feed, builds
+  a `StrategyContext`, and routes the resulting `Signal` through
+  `TradingEngine.process_signal(symbol, current_price, timestamp,
+  signal=signal)`. Errors are caught per-iteration so a transient
+  failure doesn't kill the task. Idempotent `start()` and `stop()`,
+  optional `on_signal` and `on_stop` hooks.
+- `cryptrink.web.live_setup.build_live_components`: returns a started
+  `TradingEngine`, a `BaseDataFeed`, a cleanup closure, the actual
+  mode, and an optional `DiscordNotifier`. Live mode requires
+  `REVOLUTX_API_KEY` plus a private key (raw or PEM-path); without
+  them the Start button silently falls back to paper mode.
+- `cryptrink.web.tabs.live`: Mode radio (paper / live), strategy +
+  symbol + interval inputs, Start / Stop / Refresh buttons, and a
+  markdown status pane that renders running flag, iteration / signal /
+  execution counts, last signal type and time, and error count + last
+  error.
+- DB persistence works without code changes: `DB_URL` env var is
+  honoured by `DatabaseSettings(env_prefix="DB_")`, so a Space with a
+  Storage Bucket mounted at `/data` only needs
+  `DB_URL=sqlite+aiosqlite:////data/cryptrink.db` in its environment.
+- Discord notifier wired into the loop's `on_signal` callback when
+  `NOTIFY_DISCORD_ENABLED=true` and a webhook URL is set.
+
+### Phase 9c — Local-inference LLM agent on a ZeroGPU Space (planned)
+
+The TradingAgents-inspired analyst → researcher → trader → risk
+pipeline implemented as a `BaseStrategy` subclass that runs each role
+through a local open-weights model gated by `@spaces.GPU(duration=60)`.
+Lands a Transcript tab that renders the per-role rationales the agent
+recorded for each decision. Out of scope for 9b.
+
+### Files Created (9a + 9b)
 ```
-docker-compose.yml
-.github/workflows/
-├── ci.yml
-└── release.yml
+app.py
+requirements.txt
+src/cryptrink/runtime.py
+src/cryptrink/web/__init__.py
+src/cryptrink/web/app.py
+src/cryptrink/web/state.py
+src/cryptrink/web/live_loop.py
+src/cryptrink/web/live_setup.py
+src/cryptrink/web/tabs/__init__.py
+src/cryptrink/web/tabs/backtest.py
+src/cryptrink/web/tabs/suggest.py
+src/cryptrink/web/tabs/status.py
+src/cryptrink/web/tabs/live.py
+tests/unit/test_runtime.py
+tests/unit/test_web_app.py
+tests/unit/test_live_loop.py
+tests/unit/test_live_setup.py
 ```
 
 ---
