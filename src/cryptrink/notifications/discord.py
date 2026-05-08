@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Self
 
@@ -15,6 +17,22 @@ if TYPE_CHECKING:
     from cryptrink.execution.models import Order, Position
 
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class DiscordTestResult:
+    """Outcome of an explicit ``DiscordNotifier.send_test`` call.
+
+    Returned to the Live tab's "Test Discord notification" handler so the
+    UI can surface the precise reason for a failure (HTTP 401 from a
+    revoked webhook, 404 from a deleted webhook, network error, …)
+    rather than the silent ``logger.warning`` the production trade path
+    uses.
+    """
+
+    ok: bool
+    status: int
+    detail: str
 
 
 class DiscordNotifier:
@@ -225,6 +243,67 @@ class DiscordNotifier:
             color=0xFF0000,  # Red
             fields=fields,
         )
+
+    async def send_test(self) -> DiscordTestResult:
+        """Send a synthetic embed and return what Discord said.
+
+        The trade-notification path swallows errors with ``logger.warning``
+        so a misconfigured webhook silently produces no Discord messages
+        and the operator has no idea why. This method exists for the
+        explicit "test the webhook" button on the Live tab: it always
+        builds a payload, always hits the webhook, and returns a
+        :class:`DiscordTestResult` with the HTTP status + body so the UI
+        can surface the actual reason for a failure.
+
+        The notifier's ``enabled`` flag is intentionally bypassed — the
+        operator is asking for the test, so we run it even if normal
+        notifications are turned off.
+        """
+        if not self._webhook_url:
+            return DiscordTestResult(
+                ok=False,
+                status=0,
+                detail="webhook URL is empty (set NOTIFY_DISCORD_WEBHOOK_URL)",
+            )
+
+        embed = {
+            "title": "🧪 Cryptrink test notification",
+            "description": (
+                "If you see this on your phone, the webhook is wired up and "
+                "trade alerts will land here too."
+            ),
+            "color": 0x0099FF,
+            "fields": [
+                {"name": "Sent at (UTC)", "value": datetime.now(UTC).isoformat(timespec="seconds")},
+                {"name": "Source", "value": "Live tab → Test Discord notification"},
+            ],
+            "footer": {"text": "Cryptrink Trading Agent"},
+        }
+        payload = {"embeds": [embed]}
+
+        own_session = self._session is None
+        session = self._session or aiohttp.ClientSession()
+        try:
+            async with session.post(self._webhook_url, json=payload) as response:
+                body = await response.text()
+                if response.status == 204:
+                    return DiscordTestResult(
+                        ok=True,
+                        status=204,
+                        detail="webhook returned 204 No Content (delivered)",
+                    )
+                return DiscordTestResult(
+                    ok=False,
+                    status=response.status,
+                    detail=body or f"HTTP {response.status} (no body)",
+                )
+        except aiohttp.ClientError as exc:
+            return DiscordTestResult(ok=False, status=0, detail=f"network error: {exc}")
+        except Exception as exc:  # pragma: no cover — defensive, surface anything else
+            return DiscordTestResult(ok=False, status=0, detail=f"unexpected: {exc}")
+        finally:
+            if own_session:
+                await session.close()
 
     async def _send_embed(
         self,

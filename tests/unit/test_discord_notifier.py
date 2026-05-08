@@ -408,3 +408,100 @@ class TestWebhookFailure:
 
         # Should not raise exception
         await notifier.send_trade_notification(order)
+
+
+class _FakePost:
+    """Minimal async-context-manager fake for ``aiohttp.ClientSession.post``.
+
+    The existing ``mock_session`` fixture wires
+    ``session.post.return_value.__aenter__.return_value`` which only
+    works inside callers that swallow exceptions — the actual ``async
+    with`` blows up because ``AsyncMock.post(...)`` returns a coroutine,
+    not a context manager. ``send_test`` doesn't swallow, so we need a
+    real one. Capturing ``call_args`` lets us assert the payload too.
+    """
+
+    def __init__(self, status: int, body: str = "") -> None:
+        self._status = status
+        self._body = body
+        self.call_args: tuple[tuple, dict] | None = None
+        self.called = False
+
+    def __call__(self, *args, **kwargs):
+        self.call_args = (args, kwargs)
+        self.called = True
+        outer = self
+
+        class _Ctx:
+            async def __aenter__(self_inner):
+                response = AsyncMock()
+                response.status = outer._status
+                response.text = AsyncMock(return_value=outer._body)
+                return response
+
+            async def __aexit__(self_inner, exc_type, exc, tb):
+                return None
+
+        return _Ctx()
+
+
+class _FakeSession:
+    def __init__(self, post: _FakePost) -> None:
+        self.post = post
+
+    async def close(self) -> None:  # pragma: no cover — no-op
+        return None
+
+
+class TestDiscordSendTest:
+    """``DiscordNotifier.send_test`` powers the Live tab's "Test Discord
+    notification" button. Unlike the trade-notification path it must
+    *surface* the HTTP status / body so the operator sees why the
+    webhook is misconfigured (revoked, deleted, etc.)."""
+
+    @pytest.mark.asyncio
+    async def test_returns_ok_when_webhook_returns_204(self, notifier):
+        post = _FakePost(status=204, body="")
+        notifier._session = _FakeSession(post)  # type: ignore[assignment]
+        result = await notifier.send_test()
+        assert result.ok is True
+        assert result.status == 204
+        assert "delivered" in result.detail.lower()
+        assert post.called
+        # Payload must include the test embed.
+        kwargs = post.call_args[1]
+        assert "embeds" in kwargs["json"]
+        assert kwargs["json"]["embeds"][0]["title"].startswith("🧪")
+
+    @pytest.mark.asyncio
+    async def test_surfaces_non_204_status_and_body(self, notifier):
+        """A revoked webhook returns 401 — the test handler should expose
+        both the status code and the response body verbatim so the
+        operator can see Discord's reason."""
+        post = _FakePost(status=401, body='{"message":"Unauthorized","code":50027}')
+        notifier._session = _FakeSession(post)  # type: ignore[assignment]
+        result = await notifier.send_test()
+        assert result.ok is False
+        assert result.status == 401
+        assert "Unauthorized" in result.detail
+
+    @pytest.mark.asyncio
+    async def test_returns_failure_when_webhook_url_empty(self):
+        notifier = DiscordNotifier(webhook_url="", enabled=True)
+        result = await notifier.send_test()
+        assert result.ok is False
+        assert result.status == 0
+        assert "empty" in result.detail.lower()
+
+    @pytest.mark.asyncio
+    async def test_runs_even_when_notifier_is_disabled(self):
+        """The operator hit the explicit test button — bypass the
+        ``enabled`` gate so the probe always actually fires."""
+        notifier = DiscordNotifier(
+            webhook_url="https://discord.com/api/webhooks/test", enabled=False
+        )
+        post = _FakePost(status=204)
+        notifier._session = _FakeSession(post)  # type: ignore[assignment]
+        result = await notifier.send_test()
+        assert result.ok is True
+        assert post.called
