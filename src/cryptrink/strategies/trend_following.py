@@ -24,9 +24,11 @@ class SmaCrossoverStrategy(BaseStrategy):
     slow SMA. This is a classic trend-following strategy.
 
     Strategy Logic:
-    - ENTRY_LONG: Fast SMA crosses above slow SMA (bullish crossover)
-    - EXIT_LONG: Fast SMA crosses below slow SMA (bearish crossover)
-    - Signal strength based on distance between SMAs
+    - ENTRY_LONG: Fast SMA crosses above slow SMA (bullish crossover) when flat.
+    - EXIT_LONG: Fast SMA crosses below slow SMA (bearish crossover) when long.
+    - HOLD: any other state, including a bullish crossover while already long
+      (the position is already aligned with the signal, so don't churn).
+    - Signal strength based on distance between SMAs.
 
     Parameters:
         fast_period: Period for fast SMA (default: 10)
@@ -129,18 +131,19 @@ class SmaCrossoverStrategy(BaseStrategy):
         strength = SignalStrength.WEAK
 
         if self._prev_fast_sma is not None and self._prev_slow_sma is not None:
-            # Bullish crossover: fast crosses above slow
+            # Bullish crossover: fast crosses above slow → enter long if flat,
+            # otherwise hold (the existing position is already aligned with the
+            # signal, so don't churn).
             if (
                 self._prev_fast_sma <= self._prev_slow_sma
                 and current_fast > current_slow
                 and pct_diff >= self._signal_threshold
             ):
-                signal_type = (
-                    SignalType.EXIT_LONG if context.has_position else SignalType.ENTRY_LONG
-                )
+                signal_type = SignalType.HOLD if context.has_position else SignalType.ENTRY_LONG
                 strength = self._calculate_signal_strength(pct_diff)
 
-            # Bearish crossover: fast crosses below slow
+            # Bearish crossover: fast crosses below slow → exit long if we're
+            # in a position, otherwise hold.
             elif (
                 self._prev_fast_sma >= self._prev_slow_sma
                 and current_fast < current_slow

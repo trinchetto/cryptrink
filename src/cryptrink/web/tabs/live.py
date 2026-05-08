@@ -24,7 +24,14 @@ from cryptrink.strategies import registry as strategy_registry
 from cryptrink.strategies.base import SignalType
 from cryptrink.web.live_loop import LiveLoop, LiveLoopState, get_active_loop, set_active_loop
 from cryptrink.web.live_setup import LiveMode, build_live_components, has_revolutx_credentials
-from cryptrink.web.state import default_symbol, get_runtime, get_symbol_choices
+from cryptrink.web.state import (
+    Dataset,
+    default_symbol,
+    get_runtime,
+    get_symbol_choices,
+    list_datasets,
+    list_datasets_sync,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -59,9 +66,23 @@ def _build_discord_callback(
     return callback
 
 
+async def _dataset_choices() -> list[tuple[str, str]]:
+    return [(ds.label, ds.value) for ds in await list_datasets()]
+
+
+async def refresh_datasets(current: str | None) -> object:
+    """Re-query the OHLCV table and update this tab's Dataset dropdown."""
+    choices = await _dataset_choices()
+    if not choices:
+        return gr.update(choices=[], value=None)
+    values = {value for _, value in choices}
+    new_value = current if current in values else choices[0][1]
+    return gr.update(choices=choices, value=new_value)
+
+
 async def start_loop(
     strategy_name: str,
-    symbol: str,
+    dataset_value: str | None,
     interval_seconds: float,
     initial_balance: float,
     mode_value: str,
@@ -69,8 +90,15 @@ async def start_loop(
     """Build a fresh :class:`LiveLoop` and start it. Used by the Start button."""
     if not strategy_name:
         raise gr.Error("Select a strategy.")
-    if not symbol:
-        raise gr.Error("Enter a symbol.")
+    if not dataset_value:
+        raise gr.Error(
+            "Select a dataset. Open the Data tab and run Backfill if the "
+            "dropdown is empty, then click Refresh datasets here."
+        )
+    try:
+        symbol, dataset_timeframe = Dataset.parse(dataset_value)
+    except ValueError as exc:
+        raise gr.Error(f"Malformed dataset value: {exc}") from exc
     if interval_seconds <= 0:
         raise gr.Error("Interval must be positive.")
 
@@ -87,6 +115,16 @@ async def start_loop(
         strategy = resolve_strategy(strategy_name)
     except KeyError as exc:
         raise gr.Error(f"Unknown strategy '{strategy_name}'.") from exc
+
+    if strategy.timeframe != dataset_timeframe:
+        raise gr.Error(
+            f"Strategy {strategy.name!r} expects timeframe={strategy.timeframe!r} "
+            f"but the selected dataset is {dataset_timeframe!r}. The Live loop "
+            f"would fetch candles at {strategy.timeframe!r} and bypass the "
+            f"selected dataset entirely. Pick a dataset that matches the "
+            f"strategy's timeframe, or backfill {strategy.timeframe!r} for "
+            f"{symbol} from the Data tab."
+        )
 
     runtime = get_runtime()
     session_factory = runtime.session_factory
@@ -322,7 +360,9 @@ def render() -> None:
             "the configured executor. **Paper** mode replays signals against the "
             "stored OHLCV in the configured database; **Live** mode places real "
             "orders on Revolut X (requires REVOLUTX_API_KEY + REVOLUTX_PRIVATE_KEY "
-            "in the environment).\n\n" + cred_hint
+            "in the environment).\n\nThe Dataset dropdown lists what's actually "
+            "in the OHLCV table — the strategy's preferred timeframe must match "
+            "the selected dataset so the loop fetches the right candles.\n\n" + cred_hint
         )
         with gr.Row():
             strategy_input = gr.Dropdown(
@@ -330,12 +370,20 @@ def render() -> None:
                 value=default_strategy,
                 label="Strategy",
             )
-            symbol_input = gr.Dropdown(
-                choices=get_symbol_choices(),
-                value=default_symbol(),
-                label="Symbol",
+            # See backtest.py for why we pre-populate synchronously and
+            # set allow_custom_value=True (Gradio SSR mode rejects
+            # otherwise-valid values when server-side ``choices`` is empty
+            # at render time, even after an async refresh).
+            initial_datasets = list_datasets_sync()
+            initial_choices = [(ds.label, ds.value) for ds in initial_datasets]
+            initial_value = initial_choices[0][1] if initial_choices else None
+            dataset_input = gr.Dropdown(
+                choices=initial_choices,
+                value=initial_value,
+                label="Dataset (symbol @ timeframe)",
                 allow_custom_value=True,
             )
+            refresh_datasets_btn = gr.Button("Refresh datasets", variant="secondary")
         with gr.Row():
             interval_input = gr.Number(value=60.0, label="Interval (seconds)", minimum=1)
             balance_input = gr.Number(value=10000.0, label="Initial paper balance (EUR)")
@@ -349,13 +397,17 @@ def render() -> None:
         with gr.Row():
             start_btn = gr.Button("Start", variant="primary")
             stop_btn = gr.Button("Stop", variant="stop")
-            refresh_btn = gr.Button("Refresh")
+            refresh_btn = gr.Button("Refresh status")
 
         status_output = gr.Markdown(value=refresh_status())
 
+        refresh_datasets_btn.click(
+            fn=refresh_datasets, inputs=[dataset_input], outputs=[dataset_input]
+        )
+        dataset_input.focus(fn=refresh_datasets, inputs=[dataset_input], outputs=[dataset_input])
         start_btn.click(
             fn=start_loop,
-            inputs=[strategy_input, symbol_input, interval_input, balance_input, mode_input],
+            inputs=[strategy_input, dataset_input, interval_input, balance_input, mode_input],
             outputs=[status_output],
         )
         stop_btn.click(fn=stop_loop, inputs=[], outputs=[status_output])

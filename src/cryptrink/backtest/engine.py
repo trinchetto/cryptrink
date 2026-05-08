@@ -165,12 +165,16 @@ class BacktestEngine:
         # 2. Calculate lookback start time
         lookback_start = self._calculate_lookback_start(start_time, timeframe, lookback_periods)
 
-        # 3. Load historical OHLCV data
+        # 3. Load historical OHLCV data. Pass an explicit, large ``limit``
+        #    because :meth:`HistoricalDataFeed.get_ohlcv` defaults to 100 —
+        #    a backtest that asks for "all rows in this window" must not
+        #    silently truncate to the first 100 lookback candles.
         ohlcv_data = await self._data_feed.get_ohlcv(
             symbol=symbol,
             timeframe=timeframe,
             start_time=lookback_start,
             end_time=end_time,
+            limit=10_000_000,
         )
 
         if not ohlcv_data:
@@ -193,7 +197,11 @@ class BacktestEngine:
         )
 
         # 4. Convert to DataFrame once; per-candle context slices a rolling
-        #    window from this single frame.
+        #    window from this single frame. The DataFrame is built with a
+        #    datetime index so strategy contexts and the equity curve have
+        #    real per-candle timestamps (HistoricalDataFeed yields raw int
+        #    ms — without the conversion below the equity curve would all
+        #    stamp at datetime.now() and render as a flat right-edge line).
         df = self._build_dataframe(ohlcv_data)
 
         # 5. Record initial equity
@@ -205,8 +213,8 @@ class BacktestEngine:
         #    and execution.
         for current_index, candle in enumerate(ohlcv_data):
             # Skip lookback period (indicators need historical data)
-            candle_ts = candle["timestamp"]
-            if isinstance(candle_ts, datetime) and candle_ts < start_time:
+            candle_ts = self._coerce_candle_datetime(candle["timestamp"])
+            if candle_ts < start_time:
                 continue
 
             context = self._build_strategy_context(
@@ -219,18 +227,35 @@ class BacktestEngine:
             await self._engine.process_signal(
                 symbol=symbol,
                 current_price=Decimal(str(candle["close"])),
-                timestamp=candle_ts if isinstance(candle_ts, datetime) else datetime.now(UTC),
+                timestamp=candle_ts,
                 signal=signal,
             )
 
-            # Record equity at this point
-            current_equity = self._executor.balance
-            candle_time = candle_ts if isinstance(candle_ts, datetime) else datetime.now(UTC)
-            self._equity_curve.append((candle_time, current_equity))
+            # Record mark-to-market equity at this candle.
+            #
+            # ``self._executor.balance`` is *cash only* — a BUY drains it by
+            # the notional + fee and the asset side isn't tracked there. So
+            # while a long position is open the cash balance dips by
+            # ~position_value and the equity curve, if it just plotted the
+            # cash, would render as a sawtooth that diverges from the
+            # metrics table's mark-to-market final equity. We instead price
+            # the open position at the current close so the curve reflects
+            # actual portfolio value at every step.
+            current_price = Decimal(str(candle["close"]))
+            self._equity_curve.append(
+                (candle_ts, self._mark_to_market_equity(symbol, current_price))
+            )
 
         # 7. Close any open positions at end
         final_price = Decimal(str(ohlcv_data[-1]["close"]))
         await self._close_all_positions(symbol, final_price, end_time)
+
+        # 7b. Append the final post-unwind equity. Without this, the last
+        #     point on the curve is the pre-unwind mark-to-market — close
+        #     to the metrics table's ``ending_equity`` but off by the exit
+        #     fee. Logging the actual ``ending_equity`` here makes the
+        #     curve's right edge match the table exactly.
+        self._equity_curve.append((end_time, self._executor.balance))
 
         # 8. Calculate comprehensive metrics
         result = await self._calculate_results(
@@ -317,10 +342,11 @@ class BacktestEngine:
                 :class:`HistoricalDataFeed` output).
 
         Returns:
-            DataFrame with columns: timestamp, open, high, low, close, volume.
+            DataFrame indexed by ``datetime`` with columns ``open``, ``high``,
+            ``low``, ``close``, ``volume`` as floats.
         """
         data = {
-            "timestamp": [candle["timestamp"] for candle in ohlcv_data],
+            "timestamp": [self._coerce_candle_datetime(c["timestamp"]) for c in ohlcv_data],
             "open": [float(candle["open"]) for candle in ohlcv_data],  # type: ignore[arg-type]
             "high": [float(candle["high"]) for candle in ohlcv_data],  # type: ignore[arg-type]
             "low": [float(candle["low"]) for candle in ohlcv_data],  # type: ignore[arg-type]
@@ -332,6 +358,39 @@ class BacktestEngine:
         df.set_index("timestamp", inplace=True)
 
         return df
+
+    def _mark_to_market_equity(self, symbol: str, current_price: Decimal) -> Decimal:
+        """Total portfolio value: cash + open-position value at ``current_price``.
+
+        ``BacktestExecutor.balance`` is just cash; the open position is held
+        as ``{quantity, entry_price}`` in the executor's ``_positions``
+        dict. To plot a meaningful equity curve we must add the
+        mark-to-market value of any open long back in.
+        """
+        equity = self._executor.balance
+        position = self._executor.get_position(symbol)
+        if position is not None:
+            quantity = Decimal(str(position.get("quantity", "0")))
+            equity += quantity * current_price
+        return equity
+
+    @staticmethod
+    def _coerce_candle_datetime(value: object) -> datetime:
+        """Normalise a candle timestamp to a UTC ``datetime``.
+
+        :class:`~cryptrink.data.feed.HistoricalDataFeed` returns the raw int
+        milliseconds straight off the OHLCV row, while tests sometimes pass
+        ``datetime`` objects directly. Either is acceptable; everything
+        downstream — the rolling DataFrame index, the equity curve, the
+        signal that flows into :class:`TradingEngine` — needs a real
+        timezone-aware datetime.
+        """
+        if isinstance(value, datetime):
+            return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+        if isinstance(value, (int, float)):
+            return datetime.fromtimestamp(int(value) / 1000, tz=UTC)
+        msg = f"Unsupported candle timestamp type: {type(value).__name__}"
+        raise TypeError(msg)
 
     def _build_strategy_context(
         self,
@@ -387,28 +446,22 @@ class BacktestEngine:
     ) -> None:
         """Close any open positions at end of backtest.
 
-        Forces an explicit EXIT signal directly through the BacktestExecutor.
-        We bypass TradingEngine here because its PositionTracker is not yet
-        synced with executor-internal state (BacktestExecutor maintains its
-        own positions dict), and risk validation does not apply to a forced
-        end-of-backtest unwind.
-
-        Args:
-            symbol: Trading symbol.
-            current_price: Current market price.
-            timestamp: Current timestamp.
+        Routes the synthetic EXIT signal through :class:`TradingEngine`
+        (rather than the executor directly) so the position tracker
+        records the close — without that, ``BacktestResult.trades``
+        misses end-of-backtest unwinds.
         """
-        from cryptrink.execution.base import ExecutionContext
         from cryptrink.strategies.base import Signal, SignalStrength, SignalType
 
         position = self._executor.get_position(symbol)
         if position is None:
             return
 
-        side_str = position.get("side")
-        exit_signal_type = SignalType.EXIT_SHORT if side_str == "short" else SignalType.EXIT_LONG
+        # BacktestExecutor's _positions dict has no "side" field, only longs
+        # are ever opened (BUY → long), so EXIT_LONG is always the right
+        # closing signal.
+        exit_signal_type = SignalType.EXIT_LONG
         quantity_str = str(position.get("quantity", "0"))
-        position_size = Decimal(quantity_str)
 
         logger.info(
             "closing_position_at_backtest_end",
@@ -425,16 +478,12 @@ class BacktestEngine:
             price=current_price,
             strength=SignalStrength.STRONG,
         )
-        exit_context = ExecutionContext(
+        await self._engine.process_signal(
             symbol=symbol,
             current_price=current_price,
             timestamp=timestamp,
-            account_balance=self._executor.balance,
-            has_position=True,
-            position_size=position_size,
+            signal=exit_signal,
         )
-
-        await self._executor.execute_signal(exit_signal, exit_context)
 
     async def _calculate_results(
         self,
