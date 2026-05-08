@@ -24,7 +24,7 @@ from cryptrink.execution.suggest import SuggestExecutor
 from cryptrink.runtime import resolve_strategy
 from cryptrink.strategies import registry as strategy_registry
 from cryptrink.strategies.base import StrategyContext
-from cryptrink.web.state import Dataset, get_runtime, list_datasets
+from cryptrink.web.state import Dataset, get_runtime, list_datasets, list_datasets_sync
 
 # ----------------------------------------------------------------------
 # Dataset dropdown plumbing (per-tab; see backtest.py for the rationale)
@@ -174,11 +174,18 @@ def render() -> None:
                 value=default_strategy,
                 label="Strategy",
             )
+            # See backtest.py for why we pre-populate synchronously and
+            # set allow_custom_value=True (Gradio SSR mode rejects
+            # otherwise-valid values when server-side ``choices`` is empty
+            # at render time, even after an async refresh).
+            initial_datasets = list_datasets_sync()
+            initial_choices = [(ds.label, ds.value) for ds in initial_datasets]
+            initial_value = initial_choices[0][1] if initial_choices else None
             dataset_input = gr.Dropdown(
-                choices=[],
-                value=None,
+                choices=initial_choices,
+                value=initial_value,
                 label="Dataset (symbol @ timeframe)",
-                allow_custom_value=False,
+                allow_custom_value=True,
             )
             refresh_btn = gr.Button("Refresh datasets", variant="secondary")
         run_btn = gr.Button("Suggest", variant="primary")

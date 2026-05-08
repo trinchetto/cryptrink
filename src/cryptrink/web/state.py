@@ -172,6 +172,58 @@ async def list_datasets() -> list[Dataset]:
     ]
 
 
+def list_datasets_sync() -> list[Dataset]:
+    """Synchronous twin of :func:`list_datasets` for use during ``render()``.
+
+    Gradio's tab ``render()`` is sync but ``list_datasets`` is async; without
+    a sync path the dropdown is rendered with ``choices=[]`` and Gradio's
+    SSR mode then rejects any value the operator picks before the dropdown
+    has a chance to lazy-populate. Reading the OHLCV summary via stdlib
+    ``sqlite3`` against the on-disk file is a cheap, dependency-free
+    workaround — the table is small and we only need the GROUP BY summary.
+
+    Returns ``[]`` for non-sqlite URLs (in-memory or other drivers); the
+    caller should fall back to ``allow_custom_value=True`` in that case.
+    """
+    runtime = get_runtime()
+    db_url = runtime.settings.database.url
+    prefix = "sqlite+aiosqlite:///"
+    if not db_url.startswith(prefix):
+        return []
+    raw = db_url[len(prefix) :]
+    if raw == ":memory:":
+        return []
+
+    import sqlite3
+
+    path = raw
+    try:
+        with sqlite3.connect(path) as conn:
+            cursor = conn.execute(
+                "SELECT symbol, timeframe, COUNT(*), MIN(timestamp), MAX(timestamp) "
+                "FROM ohlcv "
+                "GROUP BY symbol, timeframe "
+                "ORDER BY symbol, timeframe"
+            )
+            rows = cursor.fetchall()
+    except sqlite3.OperationalError:
+        # Table doesn't exist yet (first boot before any backfill) or the
+        # file is locked. Either way the dropdown should just be empty;
+        # the operator can use the Refresh button after backfilling.
+        return []
+
+    return [
+        Dataset(
+            symbol=symbol,
+            timeframe=timeframe,
+            candle_count=int(count),
+            earliest=datetime.fromtimestamp(int(earliest) / 1000, tz=UTC),
+            latest=datetime.fromtimestamp(int(latest) / 1000, tz=UTC),
+        )
+        for symbol, timeframe, count, earliest, latest in rows
+    ]
+
+
 async def flush_runtime() -> None:
     """Dispose the runtime's SQLite engine and rebuild the session factory.
 

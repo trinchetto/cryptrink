@@ -49,6 +49,7 @@ from cryptrink.web.state import (
     Dataset,
     get_runtime,
     list_datasets,
+    list_datasets_sync,
 )
 
 if TYPE_CHECKING:
@@ -662,13 +663,22 @@ def render() -> None:
                 value=default_strategy,
                 label="Strategy",
             )
-            # Dataset dropdown starts empty; the Refresh button below populates
-            # it. We can't `await list_datasets()` here because render() is sync.
+            # Read the OHLCV summary synchronously so the dropdown lands
+            # populated. Gradio's SSR mode rejects submitted values when
+            # the server-side ``choices`` list is empty — even after a
+            # later async refresh the validator still sees the original
+            # render-time choices and bounces the value before any
+            # handler can run. ``allow_custom_value=True`` is also kept
+            # as a belt-and-braces fallback; the run handler always
+            # validates via ``Dataset.parse``.
+            initial_datasets = list_datasets_sync()
+            initial_choices = [(ds.label, ds.value) for ds in initial_datasets]
+            initial_value = initial_choices[0][1] if initial_choices else None
             dataset_input = gr.Dropdown(
-                choices=[],
-                value=None,
+                choices=initial_choices,
+                value=initial_value,
                 label="Dataset (symbol @ timeframe)",
-                allow_custom_value=False,
+                allow_custom_value=True,
             )
             refresh_datasets_btn = gr.Button("Refresh datasets", variant="secondary")
 

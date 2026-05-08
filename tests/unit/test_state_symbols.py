@@ -9,8 +9,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from cryptrink.core.config import (
     DatabaseSettings,
@@ -30,6 +34,7 @@ from cryptrink.web.state import (
     get_runtime,
     get_symbol_choices,
     list_datasets,
+    list_datasets_sync,
     reset_runtime,
     set_cached_symbols,
 )
@@ -253,3 +258,69 @@ class TestListDatasets:
         # Timestamps are real UTC datetimes, not ints.
         assert isinstance(datasets[0].earliest, datetime)
         assert datasets[0].earliest.tzinfo is not None
+
+
+class TestListDatasetsSync:
+    """``list_datasets_sync`` powers the dropdown's render-time population.
+
+    Gradio's tab ``render()`` is sync and Gradio's SSR mode rejects
+    submitted dropdown values whose server-side ``choices`` was empty at
+    render time — even after a later async refresh. We need a sync read.
+    """
+
+    def test_returns_empty_for_in_memory_url(self) -> None:
+        _install_runtime()
+        # An in-memory DB has no on-disk file, so the sync helper can
+        # only return [] and the dropdown will lazy-populate via the
+        # async refresh button.
+        assert list_datasets_sync() == []
+
+    @pytest.mark.asyncio
+    async def test_reads_persisted_groups_from_sqlite_file(self, tmp_path: Path) -> None:
+        """Persist a couple of OHLCV groups to a real on-disk SQLite file
+        and confirm ``list_datasets_sync`` sees the same view as the async
+        helper. This is the exact code path the dropdown uses on Space boot."""
+        from cryptrink.cli.utils import init_db_schema
+
+        db_path = tmp_path / "datasets.db"
+        settings = Settings(
+            revolutx=RevolutXSettings(),
+            risk=RiskSettings(),
+            database=DatabaseSettings(url=f"sqlite+aiosqlite:///{db_path}"),
+            notifications=NotificationSettings(),
+        )
+        runtime = WebRuntime(
+            settings=settings,
+            session_factory=build_session_factory(settings.database.url),
+        )
+        web_state._runtime = runtime
+        await init_db_schema(runtime.session_factory)
+
+        from decimal import Decimal as Dec
+
+        from cryptrink.data.storage import OHLCVRepository
+
+        repo = OHLCVRepository(runtime.session_factory)
+        base = int(datetime(2024, 6, 1, tzinfo=UTC).timestamp() * 1000)
+        await repo.save_batch(
+            [
+                {
+                    "symbol": "BTC-EUR",
+                    "timeframe": "1h",
+                    "timestamp": base,
+                    "open": Dec("100"),
+                    "high": Dec("105"),
+                    "low": Dec("95"),
+                    "close": Dec("100"),
+                    "volume": Dec("1"),
+                },
+            ]
+        )
+        # Dispose so the file's writes flush before the sync read opens it.
+        await flush_runtime()
+
+        datasets = list_datasets_sync()
+        assert len(datasets) == 1
+        assert datasets[0].symbol == "BTC-EUR"
+        assert datasets[0].timeframe == "1h"
+        assert datasets[0].candle_count == 1
