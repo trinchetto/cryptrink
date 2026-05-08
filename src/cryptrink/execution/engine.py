@@ -289,15 +289,54 @@ class TradingEngine:
     async def _record_execution(
         self, signal: Signal, result: ExecutionResult, context: ExecutionContext
     ) -> None:
-        """Record execution results in order manager and position tracker.
+        """Mirror executor-side position lifecycle into the position tracker.
 
-        Args:
-            signal: Signal that was executed.
-            result: Execution result.
-            context: Execution context.
+        Without this hook the position tracker is forever empty: every
+        executor (paper, backtest, live) maintains its own private
+        ``_positions`` dict, but :meth:`process_signal` reads ``has_position``
+        from the tracker. The two views silently desync — risk validation
+        sees no open positions, every EXIT signal gets rejected with
+        ``exit_signal_rejected_no_position``, and the strategy never gets
+        to flip in and out of the market. Writing here closes the loop:
+        ENTRY opens a row, EXIT closes the matching row, and the next
+        ``process_signal`` call reads the same view the executor already
+        holds.
         """
-        # For paper and live modes, the executor already handles order/position tracking
-        # This method is a hook for additional bookkeeping if needed
+        if not result.success or result.quantity is None or result.price is None:
+            return
+        if result.order_id is None:
+            return
+
+        if signal.signal_type == SignalType.ENTRY_LONG:
+            await self._position_tracker.open_position(
+                symbol=signal.symbol,
+                side="long",
+                quantity=result.quantity,
+                entry_price=result.price,
+                entry_order_id=result.order_id,
+                strategy_name=getattr(self._strategy, "name", None),
+            )
+        elif signal.signal_type == SignalType.ENTRY_SHORT:
+            await self._position_tracker.open_position(
+                symbol=signal.symbol,
+                side="short",
+                quantity=result.quantity,
+                entry_price=result.price,
+                entry_order_id=result.order_id,
+                strategy_name=getattr(self._strategy, "name", None),
+            )
+        elif signal.signal_type in (SignalType.EXIT_LONG, SignalType.EXIT_SHORT):
+            # Close every open position on this symbol. The risk validator
+            # already rejected this signal if there was nothing to close,
+            # so reaching here means at least one row should exist.
+            open_positions = await self._position_tracker.get_open_positions(symbol=signal.symbol)
+            for position in open_positions:
+                await self._position_tracker.close_position(
+                    position_id=position.position_id,
+                    exit_price=result.price,
+                    exit_order_id=result.order_id,
+                )
+
         logger.debug(
             "execution_recorded",
             order_id=result.order_id,

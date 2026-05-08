@@ -296,14 +296,15 @@ class TestBacktestEngineWithTrades:
         assert result.strategy_name == "SimpleBuyHoldStrategy"
         assert result.initial_balance == Decimal("10000")
 
-        # Strategy signals are now executed: SimpleBuyHoldStrategy emits an
-        # ENTRY_LONG on the first in-window candle, the executor opens a
-        # position, and end-of-backtest forces it closed -- so the ending
-        # balance must differ from the initial deposit.
-        # NOTE: result.metrics.total_trades is read from the engine's
-        # PositionTracker, which BacktestExecutor does not yet sync to;
-        # ending_equity is the unambiguous signal that trades executed.
+        # SimpleBuyHoldStrategy emits an ENTRY_LONG on the first in-window
+        # candle. The executor opens a position, end-of-backtest closes it
+        # via the engine, and ``_record_execution`` writes both halves to
+        # the position tracker — so ``result.trades`` should contain at
+        # least one closed position. (Before the position-tracker sync
+        # fix this stayed at zero, which is the regression we're guarding.)
         assert result.metrics.ending_equity != Decimal("10000")
+        assert result.metrics.total_trades >= 1
+        assert len(result.trades) >= 1
 
 
 class TestBacktestEngineMetrics:
@@ -889,3 +890,90 @@ class TestBacktestEngineDataLimit:
         # And the result reflects the full window — not 100 candles.
         # 500 in-window + initial seed = 501 entries.
         assert len(result.equity_curve) > 100
+
+
+class TestBacktestEnginePositionTrackerSync:
+    """Regression: ``TradingEngine._record_execution`` must keep the
+    position tracker in sync with the executor's open position.
+
+    The user-visible failure mode: a strategy emitted 1 ENTRY_LONG + 8
+    EXIT_LONGs over ~3000 candles. The engine accepted the ENTRY (real
+    fill, balance changed) but silently rejected every EXIT with
+    ``exit_signal_rejected_no_position`` because its position tracker
+    was empty — the executor's ``_positions`` dict was the only place
+    the long was ever recorded. End-of-backtest unwound the position
+    via the executor directly, so ``ending_equity`` reflected a profit
+    while ``total_trades`` stayed at 0. After the fix, the in-window
+    EXIT closes the position normally and ``total_trades`` > 0.
+    """
+
+    @pytest.fixture
+    def alternating_strategy(self):
+        """Emit ENTRY_LONG / EXIT_LONG / HOLD in a deterministic cycle.
+
+        Drives the engine through at least one full open + close cycle
+        in-window so we can assert the tracker recorded the round trip.
+        """
+        from cryptrink.strategies.base import (
+            BaseStrategy,
+            Signal,
+            SignalStrength,
+            SignalType,
+        )
+
+        class AlternatingStrategy(BaseStrategy):
+            def __init__(self):
+                self._step = 0
+
+            @property
+            def name(self) -> str:
+                return "AlternatingStrategy"
+
+            @property
+            def description(self) -> str:
+                return "Test strategy: ENTRY then EXIT then HOLD."
+
+            def generate_signal(self, context):
+                self._step += 1
+                if self._step == 1 and not context.has_position:
+                    sig_type = SignalType.ENTRY_LONG
+                elif self._step == 5 and context.has_position:
+                    sig_type = SignalType.EXIT_LONG
+                else:
+                    sig_type = SignalType.HOLD
+                return Signal(
+                    signal_type=sig_type,
+                    symbol=context.symbol,
+                    timestamp=context.timestamp,
+                    price=context.current_price,
+                    strength=SignalStrength.STRONG,
+                )
+
+        return AlternatingStrategy()
+
+    @pytest.mark.asyncio
+    async def test_in_window_exit_closes_position_in_tracker(
+        self, dummy_data_feed, alternating_strategy
+    ):
+        engine = BacktestEngine(
+            strategy=alternating_strategy,
+            data_feed=dummy_data_feed,
+            initial_balance=Decimal("10000"),
+        )
+        result = await engine.run(
+            symbol="BTC-USD",
+            start_time=datetime(2024, 1, 1, tzinfo=UTC),
+            end_time=datetime(2024, 1, 7, tzinfo=UTC),
+            timeframe="1h",
+            lookback_periods=10,
+        )
+        # The strategy executed exactly one round-trip in-window. Before
+        # the fix this was 0 — the EXIT was silently rejected because
+        # the tracker had no position recorded.
+        assert result.metrics.total_trades == 1
+        assert len(result.trades) == 1
+        position = result.trades[0]
+        # Both halves are recorded: an entry order ID and an exit order ID.
+        assert position.status == "closed"
+        assert position.entry_order_id is not None
+        assert position.exit_order_id is not None

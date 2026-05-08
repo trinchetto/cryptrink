@@ -413,28 +413,22 @@ class BacktestEngine:
     ) -> None:
         """Close any open positions at end of backtest.
 
-        Forces an explicit EXIT signal directly through the BacktestExecutor.
-        We bypass TradingEngine here because its PositionTracker is not yet
-        synced with executor-internal state (BacktestExecutor maintains its
-        own positions dict), and risk validation does not apply to a forced
-        end-of-backtest unwind.
-
-        Args:
-            symbol: Trading symbol.
-            current_price: Current market price.
-            timestamp: Current timestamp.
+        Routes the synthetic EXIT signal through :class:`TradingEngine`
+        (rather than the executor directly) so the position tracker
+        records the close — without that, ``BacktestResult.trades``
+        misses end-of-backtest unwinds.
         """
-        from cryptrink.execution.base import ExecutionContext
         from cryptrink.strategies.base import Signal, SignalStrength, SignalType
 
         position = self._executor.get_position(symbol)
         if position is None:
             return
 
-        side_str = position.get("side")
-        exit_signal_type = SignalType.EXIT_SHORT if side_str == "short" else SignalType.EXIT_LONG
+        # BacktestExecutor's _positions dict has no "side" field, only longs
+        # are ever opened (BUY → long), so EXIT_LONG is always the right
+        # closing signal.
+        exit_signal_type = SignalType.EXIT_LONG
         quantity_str = str(position.get("quantity", "0"))
-        position_size = Decimal(quantity_str)
 
         logger.info(
             "closing_position_at_backtest_end",
@@ -451,16 +445,12 @@ class BacktestEngine:
             price=current_price,
             strength=SignalStrength.STRONG,
         )
-        exit_context = ExecutionContext(
+        await self._engine.process_signal(
             symbol=symbol,
             current_price=current_price,
             timestamp=timestamp,
-            account_balance=self._executor.balance,
-            has_position=True,
-            position_size=position_size,
+            signal=exit_signal,
         )
-
-        await self._executor.execute_signal(exit_signal, exit_context)
 
     async def _calculate_results(
         self,

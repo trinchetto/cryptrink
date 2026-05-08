@@ -27,6 +27,14 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 import gradio as gr
+import matplotlib
+
+# ``Agg`` is the headless backend; the Space process has no display server
+# so the GUI backends (Tk, Qt) would error on import. Set this before
+# pyplot is imported anywhere — pyplot freezes the backend on first use.
+matplotlib.use("Agg")
+import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
 import pandas as pd
 
 from cryptrink.backtest.engine import BacktestEngine
@@ -220,23 +228,26 @@ async def run_backtest(
     start_date: str,
     end_date: str,
     initial_capital: float,
-) -> AsyncIterator[tuple[str, str, pd.DataFrame, pd.DataFrame, pd.DataFrame]]:
+) -> AsyncIterator[
+    tuple[str, str, matplotlib.figure.Figure | None, matplotlib.figure.Figure | None, pd.DataFrame]
+]:
     """Stream a backtest run.
 
-    Yields ``(summary_md, terminal_md, equity_df, candle_df, trades_df)``
+    Yields ``(summary_md, terminal_md, equity_fig, price_fig, trades_df)``
     tuples. Every yield is a complete render of every output, so Gradio
     can update them incrementally.
     """
     summary_md = ""
-    equity_df = pd.DataFrame(columns=["timestamp", "equity"])
-    candle_df = pd.DataFrame(columns=["timestamp", "close"])
+    # ``None`` clears any previous plot and renders a blank gr.Plot.
+    equity_fig: matplotlib.figure.Figure | None = None
+    price_fig: matplotlib.figure.Figure | None = None
     trades_df = _empty_trades_df()
 
     yield (
         summary_md,
         _emit(f"backtest: starting (strategy={strategy_name!r}, dataset={dataset_value!r})"),
-        equity_df,
-        candle_df,
+        equity_fig,
+        price_fig,
         trades_df,
     )
 
@@ -244,8 +255,8 @@ async def run_backtest(
         yield (
             summary_md,
             _emit_failure("backtest: no strategy selected"),
-            equity_df,
-            candle_df,
+            equity_fig,
+            price_fig,
             trades_df,
         )
         return
@@ -256,8 +267,8 @@ async def run_backtest(
                 "backtest: no dataset selected. Open the Data tab, run Backfill, "
                 "then click Refresh datasets here."
             ),
-            equity_df,
-            candle_df,
+            equity_fig,
+            price_fig,
             trades_df,
         )
         return
@@ -268,8 +279,8 @@ async def run_backtest(
         yield (
             summary_md,
             _emit_failure("backtest: malformed dataset value", exc),
-            equity_df,
-            candle_df,
+            equity_fig,
+            price_fig,
             trades_df,
         )
         return
@@ -285,8 +296,8 @@ async def run_backtest(
         yield (
             summary_md,
             _emit_failure("backtest: invalid date", exc),
-            equity_df,
-            candle_df,
+            equity_fig,
+            price_fig,
             trades_df,
         )
         return
@@ -294,8 +305,8 @@ async def run_backtest(
         yield (
             summary_md,
             _emit_failure("backtest: end date must be after start date"),
-            equity_df,
-            candle_df,
+            equity_fig,
+            price_fig,
             trades_df,
         )
         return
@@ -306,8 +317,8 @@ async def run_backtest(
         yield (
             summary_md,
             _emit_failure(f"backtest: unknown strategy {strategy_name!r}", exc),
-            equity_df,
-            candle_df,
+            equity_fig,
+            price_fig,
             trades_df,
         )
         return
@@ -321,8 +332,8 @@ async def run_backtest(
                 f"dataset is {timeframe!r}. Running anyway against {timeframe!r} "
                 f"because the operator selected it explicitly."
             ),
-            equity_df,
-            candle_df,
+            equity_fig,
+            price_fig,
             trades_df,
         )
 
@@ -339,8 +350,8 @@ async def run_backtest(
             f"window={start_dt.date()} → {end_dt.date()}; "
             f"capital=€{initial_capital:,.2f}"
         ),
-        equity_df,
-        candle_df,
+        equity_fig,
+        price_fig,
         trades_df,
     )
 
@@ -361,16 +372,16 @@ async def run_backtest(
             f"backtest: engine built (strategy.required_history="
             f"{wrapped_strategy.required_history}, lookback_periods=200)"
         ),
-        equity_df,
-        candle_df,
+        equity_fig,
+        price_fig,
         trades_df,
     )
 
     yield (
         summary_md,
         _emit("backtest: running event-driven replay…"),
-        equity_df,
-        candle_df,
+        equity_fig,
+        price_fig,
         trades_df,
     )
 
@@ -390,8 +401,8 @@ async def run_backtest(
                 f"({_format_elapsed(run_started)}). Use the Data tab to backfill first.",
                 exc,
             ),
-            equity_df,
-            candle_df,
+            equity_fig,
+            price_fig,
             trades_df,
         )
         return
@@ -399,8 +410,8 @@ async def run_backtest(
         yield (
             summary_md,
             _emit_failure(f"backtest: engine raised after {_format_elapsed(run_started)}", exc),
-            equity_df,
-            candle_df,
+            equity_fig,
+            price_fig,
             trades_df,
         )
         return
@@ -410,11 +421,11 @@ async def run_backtest(
     log = _emit_result_summary(result)
 
     summary_md = _format_summary(result)
-    equity_df = _equity_dataframe(result)
-    candle_df = await _candle_dataframe(repository, symbol, timeframe, start_dt, end_dt)
+    equity_fig = _equity_figure(result)
+    price_fig = await _price_figure(repository, symbol, timeframe, start_dt, end_dt)
     trades_df = _trades_dataframe(result)
 
-    yield (summary_md, log, equity_df, candle_df, trades_df)
+    yield (summary_md, log, equity_fig, price_fig, trades_df)
 
 
 def _emit_signal_breakdown(counts: dict[str, int]) -> str:
@@ -462,12 +473,10 @@ def _format_summary(result: BacktestResult) -> str:
     )
 
 
-# Maximum points rendered per chart. ``gr.LinePlot`` becomes unreadable
-# (illegible x-axis labels, slow render) much past this — a 4-month 1m
-# backfill is ~170k candles, so subsampling is non-optional. The number
-# is chosen empirically: dense enough to show shape, sparse enough that
-# every label fits.
-_PLOT_MAX_POINTS = 500
+# Maximum points rendered per chart. matplotlib copes with more than this,
+# but 200 is plenty to convey shape on a few-month backtest while keeping
+# the date axis labels legible.
+_PLOT_MAX_POINTS = 200
 
 
 def _subsample(df: pd.DataFrame, max_points: int = _PLOT_MAX_POINTS) -> pd.DataFrame:
@@ -487,27 +496,75 @@ def _subsample(df: pd.DataFrame, max_points: int = _PLOT_MAX_POINTS) -> pd.DataF
     return sampled
 
 
-def _equity_dataframe(result: BacktestResult) -> pd.DataFrame:
+def _format_date_axis(ax: matplotlib.axes.Axes, dates: list[datetime]) -> None:
+    """Format the x-axis with date-only labels at sensible intervals.
+
+    The user explicitly asked for "just dates with no finer granularity";
+    matplotlib's auto-locator otherwise drifts down to hours/minutes on
+    short windows, which is unreadable when the chart is squeezed into a
+    Gradio row. We pick a locator based on the span of the data so a
+    single-week backtest gets daily ticks while a multi-month backtest
+    gets weekly or monthly ticks.
+    """
+    if not dates:
+        return
+    # matplotlib's date locators/formatter are not fully typed; we accept
+    # the untyped-call warnings here rather than wrap every call site.
+    span_days = (dates[-1] - dates[0]).days
+    locator: mdates.DateLocator
+    if span_days <= 14:
+        locator = mdates.DayLocator()  # type: ignore[no-untyped-call]
+    elif span_days <= 90:
+        locator = mdates.WeekdayLocator(byweekday=mdates.MO)  # type: ignore[no-untyped-call]
+    elif span_days <= 365:
+        locator = mdates.MonthLocator()  # type: ignore[no-untyped-call]
+    else:
+        locator = mdates.MonthLocator(bymonth=(1, 4, 7, 10))  # type: ignore[no-untyped-call]
+    ax.xaxis.set_major_locator(locator)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))  # type: ignore[no-untyped-call]
+    for label in ax.get_xticklabels():
+        label.set_rotation(30)
+        label.set_horizontalalignment("right")
+
+
+def _equity_figure(result: BacktestResult) -> matplotlib.figure.Figure:
+    """Render the equity curve as a matplotlib figure for ``gr.Plot``."""
+    fig, ax = plt.subplots(figsize=(8, 3.2), dpi=110)
     if not result.equity_curve:
-        return pd.DataFrame(columns=["timestamp", "equity"])
+        ax.text(0.5, 0.5, "(no equity data)", ha="center", va="center", transform=ax.transAxes)
+        ax.set_axis_off()
+        return fig
+
     df = pd.DataFrame([{"timestamp": ts, "equity": float(eq)} for ts, eq in result.equity_curve])
-    return _subsample(df)
+    df = _subsample(df)
+    dates = list(df["timestamp"])
+    ax.plot(dates, df["equity"], color="#3b82f6", linewidth=1.4)
+    ax.fill_between(
+        dates, df["equity"], y2=float(result.initial_balance), alpha=0.08, color="#3b82f6"
+    )
+    ax.axhline(float(result.initial_balance), color="#94a3b8", linewidth=0.8, linestyle="--")
+    ax.set_ylabel("Equity (€)")
+    ax.set_title("Equity curve")
+    ax.grid(True, alpha=0.25)
+    _format_date_axis(ax, dates)
+    fig.tight_layout()
+    return fig
 
 
-async def _candle_dataframe(
+async def _price_figure(
     repository: OHLCVRepository,
     symbol: str,
     timeframe: str,
     start_dt: datetime,
     end_dt: datetime,
-) -> pd.DataFrame:
-    """Pull the OHLCV rows the backtest actually ran against, for plotting.
+) -> matplotlib.figure.Figure:
+    """Render the close-price curve as a matplotlib figure for ``gr.Plot``.
 
-    We re-read from the repository (cheap on SQLite) rather than thread
-    them through the engine result; the engine's responsibility is the
-    backtest, not the viz. The result is subsampled before returning so
-    the chart x-axis stays readable on multi-month windows.
+    Same role as the candle plot before: confirms the data the strategy
+    saw matches what the operator expects. We fetch from the repository
+    rather than threading candles through the engine — pure viz.
     """
+    fig, ax = plt.subplots(figsize=(8, 3.2), dpi=110)
     records = await repository.get(
         symbol,
         timeframe,
@@ -516,7 +573,10 @@ async def _candle_dataframe(
         limit=10_000_000,
     )
     if not records:
-        return pd.DataFrame(columns=["timestamp", "close"])
+        ax.text(0.5, 0.5, "(no candle data)", ha="center", va="center", transform=ax.transAxes)
+        ax.set_axis_off()
+        return fig
+
     df = pd.DataFrame(
         [
             {
@@ -526,7 +586,15 @@ async def _candle_dataframe(
             for r in records
         ]
     )
-    return _subsample(df)
+    df = _subsample(df)
+    dates = list(df["timestamp"])
+    ax.plot(dates, df["close"], color="#10b981", linewidth=1.2)
+    ax.set_ylabel(f"{symbol} close")
+    ax.set_title(f"{symbol} @ {timeframe} — close price (data the strategy saw)")
+    ax.grid(True, alpha=0.25)
+    _format_date_axis(ax, dates)
+    fig.tight_layout()
+    return fig
 
 
 def _empty_trades_df() -> pd.DataFrame:
@@ -616,19 +684,13 @@ def render() -> None:
         gr.Markdown("### Result")
         summary_output = gr.Markdown(value=_NO_DATASET_NOTICE)
 
+        # ``gr.Plot`` renders a matplotlib Figure as an image: date-only
+        # x-axis labels, no broken JS tooltips, no upside-down y-axis. The
+        # cost is no live cursor, but the figure is small enough to read at
+        # a glance and the trades / summary tables carry the precise numbers.
         with gr.Row():
-            equity_output = gr.LinePlot(
-                x="timestamp",
-                y="equity",
-                title="Equity curve",
-                height=280,
-            )
-            candle_output = gr.LinePlot(
-                x="timestamp",
-                y="close",
-                title="Close price (data the strategy saw)",
-                height=280,
-            )
+            equity_output = gr.Plot(label="Equity curve")
+            candle_output = gr.Plot(label="Close price (data the strategy saw)")
         trades_output = gr.Dataframe(label="Closed trades")
 
         gr.Markdown("### Terminal")
