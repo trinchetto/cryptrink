@@ -86,6 +86,8 @@ async def start_loop(
     interval_seconds: float,
     initial_balance: float,
     mode_value: str,
+    heartbeat_enabled: bool,
+    heartbeat_interval_seconds: float,
 ) -> str:
     """Build a fresh :class:`LiveLoop` and start it. Used by the Start button."""
     if not strategy_name:
@@ -101,6 +103,8 @@ async def start_loop(
         raise gr.Error(f"Malformed dataset value: {exc}") from exc
     if interval_seconds <= 0:
         raise gr.Error("Interval must be positive.")
+    if heartbeat_enabled and heartbeat_interval_seconds <= 0:
+        raise gr.Error("Heartbeat interval must be positive.")
 
     try:
         requested_mode = LiveMode(mode_value)
@@ -139,12 +143,29 @@ async def start_loop(
     )
 
     on_signal = None
+    on_heartbeat = None
+    heartbeat_arg: float | None = None
     if components.notifier is not None:
         from cryptrink.execution.repository import OrderRepository
 
         on_signal = _build_discord_callback(
             notifier=components.notifier,
             order_repo=OrderRepository(session_factory),
+        )
+        if heartbeat_enabled:
+            # ``components.notifier`` is the same instance the on_signal
+            # callback uses, so the heartbeat reuses the existing aiohttp
+            # session and rate-limit accounting.
+            on_heartbeat = components.notifier.send_heartbeat
+            heartbeat_arg = float(heartbeat_interval_seconds)
+    elif heartbeat_enabled:
+        # The Live tab disables the checkbox when Discord isn't configured,
+        # but a careful operator could still flip it via URL state — fail
+        # loudly rather than silently dropping heartbeats.
+        raise gr.Error(
+            "Heartbeat requires Discord to be configured. Set "
+            "NOTIFY_DISCORD_ENABLED=true and NOTIFY_DISCORD_WEBHOOK_URL "
+            "in the Space secrets first."
         )
 
     loop = LiveLoop(
@@ -155,6 +176,8 @@ async def start_loop(
         interval_seconds=float(interval_seconds),
         on_signal=on_signal,
         on_stop=components.cleanup,
+        on_heartbeat=on_heartbeat,
+        heartbeat_interval_seconds=heartbeat_arg,
     )
     set_active_loop(loop)
     await loop.start()
@@ -547,6 +570,32 @@ def render() -> None:
                 info=mode_info,
             )
 
+        # Heartbeat row. Disabled by default, and disabled (greyed out)
+        # entirely when Discord isn't configured — the operator gets a
+        # clear hint why instead of a silent no-op when they tick the box.
+        discord_configured = runtime.settings.notifications.discord_enabled and bool(
+            runtime.settings.notifications.discord_webhook_url.get_secret_value()
+        )
+        with gr.Row():
+            heartbeat_enabled_input = gr.Checkbox(
+                value=False,
+                label="Discord heartbeat",
+                info=(
+                    "Send a periodic 'I'm alive' status embed to Discord."
+                    if discord_configured
+                    else "Disabled — configure NOTIFY_DISCORD_ENABLED + "
+                    "NOTIFY_DISCORD_WEBHOOK_URL in Space secrets first."
+                ),
+                interactive=discord_configured,
+            )
+            heartbeat_interval_input = gr.Number(
+                value=900.0,
+                label="Heartbeat interval (seconds)",
+                minimum=10,
+                info="900 = 15 min. Keep ≥ 60 to avoid Discord rate limits.",
+                interactive=discord_configured,
+            )
+
         with gr.Row():
             start_btn = gr.Button("Start", variant="primary")
             stop_btn = gr.Button("Stop", variant="stop")
@@ -560,7 +609,15 @@ def render() -> None:
         dataset_input.focus(fn=refresh_datasets, inputs=[dataset_input], outputs=[dataset_input])
         start_btn.click(
             fn=start_loop,
-            inputs=[strategy_input, dataset_input, interval_input, balance_input, mode_input],
+            inputs=[
+                strategy_input,
+                dataset_input,
+                interval_input,
+                balance_input,
+                mode_input,
+                heartbeat_enabled_input,
+                heartbeat_interval_input,
+            ],
             outputs=[status_output],
         )
         stop_btn.click(fn=stop_loop, inputs=[], outputs=[status_output])

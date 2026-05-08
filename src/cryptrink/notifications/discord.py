@@ -15,6 +15,7 @@ from cryptrink.core.logging import get_logger
 
 if TYPE_CHECKING:
     from cryptrink.execution.models import Order, Position
+    from cryptrink.web.live_loop import LiveLoopState
 
 logger = get_logger(__name__)
 
@@ -241,6 +242,62 @@ class DiscordNotifier:
             title="🚨 Circuit Breaker Activated",
             description=reason,
             color=0xFF0000,  # Red
+            fields=fields,
+        )
+
+    async def send_heartbeat(self, state: LiveLoopState) -> None:
+        """Post a one-line "I'm still here" status embed.
+
+        Wired to :class:`LiveLoop`'s ``on_heartbeat`` callback so the
+        operator gets a periodic confirmation on their phone that the
+        loop is alive — independent of whether any signals fired. Lack
+        of a heartbeat for >2 intervals is the operator's cue that
+        something is wrong (Space crashed, Discord webhook died, etc.).
+
+        Honours ``self._enabled``; the top-level Live tab checkbox is
+        what gates whether these get sent at all.
+        """
+        if not self._enabled:
+            return
+
+        running_emoji = "🟢" if state.running else "⏹"
+        fields: list[dict[str, Any]] = [
+            {
+                "name": "Status",
+                "value": f"{running_emoji} {'Running' if state.running else 'Stopped'}",
+                "inline": True,
+            },
+            {"name": "Symbol", "value": state.symbol or "—", "inline": True},
+            {"name": "Strategy", "value": state.strategy_name or "—", "inline": True},
+            {"name": "Iterations", "value": str(state.iteration_count), "inline": True},
+            {"name": "Signals", "value": str(state.signal_count), "inline": True},
+            {"name": "Executions", "value": str(state.execution_count), "inline": True},
+        ]
+        if state.last_signal_type is not None:
+            when = (
+                state.last_signal_at.isoformat(timespec="seconds")
+                if state.last_signal_at is not None
+                else "—"
+            )
+            fields.append({"name": "Last signal", "value": f"{state.last_signal_type} @ {when}"})
+        if state.last_iteration_at is not None:
+            fields.append(
+                {
+                    "name": "Last iteration",
+                    "value": state.last_iteration_at.isoformat(timespec="seconds"),
+                    "inline": True,
+                }
+            )
+        if state.error_count > 0:
+            fields.append({"name": "Errors", "value": str(state.error_count), "inline": True})
+        if state.last_error is not None:
+            # Discord field values cap at 1024 chars; truncate defensively.
+            fields.append({"name": "Last error", "value": state.last_error[:900]})
+
+        await self._send_embed(
+            title="💓 Cryptrink heartbeat",
+            description=f"Live loop status as of {datetime.now(UTC).isoformat(timespec='seconds')}",
+            color=0x00FF00 if state.running and state.error_count == 0 else 0xFFAA00,
             fields=fields,
         )
 
