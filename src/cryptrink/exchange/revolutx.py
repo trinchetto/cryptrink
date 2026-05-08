@@ -6,6 +6,7 @@ interface for the Revolut X cryptocurrency exchange.
 
 import json
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -79,6 +80,59 @@ def timeframe_to_interval_minutes(timeframe: str) -> int:
             f"Supported: {supported}"
         )
         raise ValueError(msg) from exc
+
+
+@dataclass(frozen=True)
+class PairInfo:
+    """Per-pair trading constraints from ``/configuration/pairs``.
+
+    The Revolut X API enforces three minimums simultaneously:
+    ``min_order_size`` in the base currency, ``min_order_size_quote`` in
+    the quote currency, and the ``base_step`` quantum that quantities must
+    be rounded to. An order failing any of them is rejected by the
+    exchange. Pre-flighting against this struct catches "your €1 order is
+    dust" before it ever leaves cryptrink.
+    """
+
+    symbol: str
+    base: str
+    quote: str
+    base_step: Decimal
+    quote_step: Decimal
+    min_order_size: Decimal
+    max_order_size: Decimal
+    min_order_size_quote: Decimal
+    status: str
+
+    def is_active(self) -> bool:
+        """``True`` when the pair currently accepts orders."""
+        return self.status.lower() == "active"
+
+    def reject_reason(self, *, quantity: Decimal, notional: Decimal) -> str | None:
+        """Return ``None`` if a hypothetical order would clear all minimums.
+
+        Otherwise return a human-readable rejection reason ready to drop
+        into the Live tab terminal so the operator sees exactly which
+        constraint trips.
+        """
+        if not self.is_active():
+            return f"pair status is {self.status!r} — not currently accepting orders"
+        if self.min_order_size > 0 and quantity < self.min_order_size:
+            return (
+                f"quantity {quantity} {self.base} is below min_order_size "
+                f"{self.min_order_size} {self.base}"
+            )
+        if self.max_order_size > 0 and quantity > self.max_order_size:
+            return (
+                f"quantity {quantity} {self.base} exceeds max_order_size "
+                f"{self.max_order_size} {self.base}"
+            )
+        if self.min_order_size_quote > 0 and notional < self.min_order_size_quote:
+            return (
+                f"notional {notional} {self.quote} is below min_order_size_quote "
+                f"{self.min_order_size_quote} {self.quote}"
+            )
+        return None
 
 
 class RevolutXExchange(BaseExchange):
@@ -452,6 +506,45 @@ class RevolutXExchange(BaseExchange):
                 symbols.append(symbol_key.replace("/", "-"))
 
         return symbols
+
+    async def get_pair_infos(self) -> dict[str, "PairInfo"]:
+        """Get every trading pair's metadata, keyed by cryptrink-style symbol.
+
+        ``/configuration/pairs`` returns a dict ``{"BTC/USD": {base, quote,
+        base_step, quote_step, min_order_size, max_order_size,
+        min_order_size_quote, status}, ...}``. Cryptrink uses the dash form
+        (``BTC-USD``) as its canonical symbol identifier, so we normalise on
+        the way out.
+
+        Returns:
+            Mapping ``{"BTC-USD": PairInfo(...)}``. Pairs whose JSON is
+            shaped unexpectedly are silently skipped — better an incomplete
+            map than a crashed pre-flight handler.
+        """
+        data = await self._request("GET", "/configuration/pairs", authenticated=True)
+        infos: dict[str, PairInfo] = {}
+        if not isinstance(data, dict):
+            return infos
+        for symbol_key, body in data.items():
+            if not isinstance(body, dict):
+                continue
+            try:
+                infos[symbol_key.replace("/", "-")] = PairInfo(
+                    symbol=symbol_key.replace("/", "-"),
+                    base=str(body.get("base", "")),
+                    quote=str(body.get("quote", "")),
+                    base_step=Decimal(str(body.get("base_step", "0"))),
+                    quote_step=Decimal(str(body.get("quote_step", "0"))),
+                    min_order_size=Decimal(str(body.get("min_order_size", "0"))),
+                    max_order_size=Decimal(str(body.get("max_order_size", "0"))),
+                    min_order_size_quote=Decimal(str(body.get("min_order_size_quote", "0"))),
+                    status=str(body.get("status", "")),
+                )
+            except (ValueError, ArithmeticError):
+                # A malformed pair entry shouldn't break the whole lookup.
+                logger.warning("pair_info_parse_failed", symbol=symbol_key, body=body)
+                continue
+        return infos
 
     async def get_candles(
         self,

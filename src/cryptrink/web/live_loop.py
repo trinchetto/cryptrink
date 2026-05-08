@@ -109,9 +109,14 @@ class LiveLoop:
         interval_seconds: float = 60.0,
         on_signal: Callable[[Signal, ExecutionResult], Awaitable[None]] | None = None,
         on_stop: Callable[[], Awaitable[None]] | None = None,
+        on_heartbeat: Callable[[LiveLoopState], Awaitable[None]] | None = None,
+        heartbeat_interval_seconds: float | None = None,
     ) -> None:
         if interval_seconds <= 0:
             msg = f"interval_seconds must be positive, got {interval_seconds}"
+            raise ValueError(msg)
+        if heartbeat_interval_seconds is not None and heartbeat_interval_seconds <= 0:
+            msg = f"heartbeat_interval_seconds must be positive, got {heartbeat_interval_seconds}"
             raise ValueError(msg)
 
         self._engine = engine
@@ -121,9 +126,12 @@ class LiveLoop:
         self._interval_seconds = interval_seconds
         self._on_signal = on_signal
         self._on_stop = on_stop
+        self._on_heartbeat = on_heartbeat
+        self._heartbeat_interval_seconds = heartbeat_interval_seconds
 
         self._stop_event = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
+        self._heartbeat_task: asyncio.Task[None] | None = None
         self._state = _MutableState(
             symbol=symbol,
             strategy_name=getattr(strategy, "name", strategy.__class__.__name__),
@@ -134,7 +142,16 @@ class LiveLoop:
     # Lifecycle
     # ------------------------------------------------------------------
     async def start(self) -> None:
-        """Spawn the background task. Idempotent."""
+        """Spawn the background task. Idempotent.
+
+        When ``on_heartbeat`` and ``heartbeat_interval_seconds`` were
+        provided to ``__init__``, a *second* task is spawned that fires
+        the heartbeat callback at its own cadence. Heartbeats run on a
+        separate task so a slow or hung Discord webhook can't stall the
+        trading iterations, and so the heartbeat cadence is independent
+        of the iteration cadence (e.g. iterate every 60 s, heartbeat
+        every 15 min).
+        """
         if self._task is not None and not self._task.done():
             return
 
@@ -144,11 +161,17 @@ class LiveLoop:
         self._state.stopped_at = None
         self._state.last_error = None
         self._task = asyncio.create_task(self._run_loop(), name=f"live-loop:{self._symbol}")
+        if self._on_heartbeat is not None and self._heartbeat_interval_seconds is not None:
+            self._heartbeat_task = asyncio.create_task(
+                self._run_heartbeat(),
+                name=f"live-loop-heartbeat:{self._symbol}",
+            )
         logger.info(
             "live_loop_started",
             symbol=self._symbol,
             strategy=self._state.strategy_name,
             interval_seconds=self._interval_seconds,
+            heartbeat_interval_seconds=self._heartbeat_interval_seconds,
         )
 
     async def stop(self) -> None:
@@ -171,8 +194,22 @@ class LiveLoop:
             pass
         finally:
             self._task = None
-            self._state.running = False
-            self._state.stopped_at = datetime.now(UTC)
+
+        # Heartbeat is a sibling task — also stops on the same event, just
+        # await it to drain. A slow webhook in flight at stop time gets a
+        # bounded grace period so we don't block the UI's Stop click.
+        if self._heartbeat_task is not None:
+            try:
+                await asyncio.wait_for(self._heartbeat_task, timeout=5.0)
+            except (asyncio.CancelledError, TimeoutError):
+                self._heartbeat_task.cancel()
+            except Exception:
+                logger.exception("live_loop_heartbeat_join_failed", symbol=self._symbol)
+            finally:
+                self._heartbeat_task = None
+
+        self._state.running = False
+        self._state.stopped_at = datetime.now(UTC)
 
         if self._on_stop is not None:
             try:
@@ -220,6 +257,28 @@ class LiveLoop:
                 return  # stop signal received during sleep
             except TimeoutError:
                 continue
+
+    async def _run_heartbeat(self) -> None:
+        """Fire the heartbeat callback every ``heartbeat_interval_seconds``.
+
+        Sleeps *before* the first beat so a Start click doesn't immediately
+        produce a "I just started!" notification. Each callback failure is
+        logged and swallowed — a misbehaving webhook must not crash the
+        trading loop.
+        """
+        assert self._on_heartbeat is not None
+        assert self._heartbeat_interval_seconds is not None
+        interval = self._heartbeat_interval_seconds
+        while not self._stop_event.is_set():
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
+                return  # stop signal received during sleep
+            except TimeoutError:
+                pass
+            try:
+                await self._on_heartbeat(self._state.snapshot())
+            except Exception:
+                logger.exception("live_loop_heartbeat_failed", symbol=self._symbol)
 
     async def _iterate_once(self) -> None:
         candles = await self._data_feed.get_ohlcv(

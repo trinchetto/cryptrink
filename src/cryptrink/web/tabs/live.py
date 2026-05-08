@@ -86,6 +86,8 @@ async def start_loop(
     interval_seconds: float,
     initial_balance: float,
     mode_value: str,
+    heartbeat_enabled: bool,
+    heartbeat_interval_seconds: float,
 ) -> str:
     """Build a fresh :class:`LiveLoop` and start it. Used by the Start button."""
     if not strategy_name:
@@ -101,6 +103,8 @@ async def start_loop(
         raise gr.Error(f"Malformed dataset value: {exc}") from exc
     if interval_seconds <= 0:
         raise gr.Error("Interval must be positive.")
+    if heartbeat_enabled and heartbeat_interval_seconds <= 0:
+        raise gr.Error("Heartbeat interval must be positive.")
 
     try:
         requested_mode = LiveMode(mode_value)
@@ -139,12 +143,29 @@ async def start_loop(
     )
 
     on_signal = None
+    on_heartbeat = None
+    heartbeat_arg: float | None = None
     if components.notifier is not None:
         from cryptrink.execution.repository import OrderRepository
 
         on_signal = _build_discord_callback(
             notifier=components.notifier,
             order_repo=OrderRepository(session_factory),
+        )
+        if heartbeat_enabled:
+            # ``components.notifier`` is the same instance the on_signal
+            # callback uses, so the heartbeat reuses the existing aiohttp
+            # session and rate-limit accounting.
+            on_heartbeat = components.notifier.send_heartbeat
+            heartbeat_arg = float(heartbeat_interval_seconds)
+    elif heartbeat_enabled:
+        # The Live tab disables the checkbox when Discord isn't configured,
+        # but a careful operator could still flip it via URL state — fail
+        # loudly rather than silently dropping heartbeats.
+        raise gr.Error(
+            "Heartbeat requires Discord to be configured. Set "
+            "NOTIFY_DISCORD_ENABLED=true and NOTIFY_DISCORD_WEBHOOK_URL "
+            "in the Space secrets first."
         )
 
     loop = LiveLoop(
@@ -155,6 +176,8 @@ async def start_loop(
         interval_seconds=float(interval_seconds),
         on_signal=on_signal,
         on_stop=components.cleanup,
+        on_heartbeat=on_heartbeat,
+        heartbeat_interval_seconds=heartbeat_arg,
     )
     set_active_loop(loop)
     await loop.start()
@@ -240,6 +263,159 @@ def _render_status(
         "| --- | --- |\n"
         f"{body}\n"
     )
+
+
+async def test_discord(_: object = None) -> str:
+    """Send a synthetic notification to the configured Discord webhook.
+
+    Surfaced as the "Test Discord notification" button so the operator
+    can verify the webhook is wired up before going live. The trade
+    path swallows webhook errors silently (intentionally — a noisy
+    webhook shouldn't break trading), so this dedicated probe is the
+    only place the operator gets to see the actual HTTP response.
+    """
+    runtime = get_runtime()
+    notifications = runtime.settings.notifications
+    if not notifications.discord_enabled:
+        return (
+            "**Discord disabled.** Set `NOTIFY_DISCORD_ENABLED=true` and "
+            "`NOTIFY_DISCORD_WEBHOOK_URL=<webhook>` in the Space secrets, then "
+            "restart the Space."
+        )
+    webhook = notifications.discord_webhook_url.get_secret_value()
+    if not webhook:
+        return (
+            "**Webhook URL is empty.** `NOTIFY_DISCORD_ENABLED` is true but "
+            "`NOTIFY_DISCORD_WEBHOOK_URL` is unset — set it in the Space secrets."
+        )
+
+    from cryptrink.notifications.discord import DiscordNotifier
+
+    notifier = DiscordNotifier(webhook_url=webhook, enabled=True)
+    result = await notifier.send_test()
+    if result.ok:
+        return (
+            f"✅ **Webhook OK** ({result.status}). Check your Discord channel — "
+            "you should see a 'Cryptrink test notification' embed. If you don't, "
+            "the webhook is delivering to a different channel than you expect."
+        )
+    return (
+        f"❌ **Webhook failed** (HTTP {result.status}).\n\n"
+        f"```\n{result.detail}\n```\n\n"
+        "Common causes:\n"
+        "- 401/403: webhook was revoked or you pasted a Slack-shaped URL.\n"
+        "- 404: the webhook was deleted on the Discord side.\n"
+        "- Network error: HF Space cannot reach `discord.com` (rare).\n"
+        "Re-issue the webhook from Discord → Server Settings → Integrations "
+        "and update the Space secret."
+    )
+
+
+async def preflight_order(dataset_value: str | None, initial_balance: float) -> str:
+    """Look up Revolut X pair limits and check the planned order would clear them.
+
+    The Live loop's first BUY allocates ``balance * max_position_size_pct``
+    of the quote currency. Revolut X enforces ``min_order_size`` (in the
+    base) and ``min_order_size_quote`` (in the quote) per pair --
+    ``allocation = 1 EUR`` against a high-priced pair is dust the exchange
+    rejects with an unhelpful generic error. This pre-flight surfaces
+    the rejection in cryptrink with the exact constraint that fails, so
+    the operator knows which knob to turn.
+    """
+    if not dataset_value:
+        return "_Pick a dataset first._"
+    try:
+        symbol, _ = Dataset.parse(dataset_value)
+    except ValueError as exc:
+        return f"_Malformed dataset value: {exc}_"
+
+    runtime = get_runtime()
+    if not has_revolutx_credentials(runtime.settings):
+        return (
+            "**Revolut X credentials missing.** Pre-flight needs the live API to "
+            "fetch per-pair limits — set `REVOLUTX_API_KEY` and "
+            "`REVOLUTX_PRIVATE_KEY` first."
+        )
+
+    from cryptrink.exchange.revolutx import RevolutXExchange
+
+    revolutx = runtime.settings.revolutx
+    try:
+        private_key_b64 = revolutx.get_private_key()
+    except ValueError as exc:
+        return f"❌ **Failed to load private key:** {exc}"
+
+    exchange = RevolutXExchange(
+        api_key=revolutx.api_key.get_secret_value(),
+        private_key_base64=private_key_b64,
+        base_url=revolutx.base_url,
+    )
+
+    try:
+        await exchange.connect()
+        try:
+            pair_infos = await exchange.get_pair_infos()
+        except Exception as exc:
+            return f"❌ **`/configuration/pairs` call failed:** {type(exc).__name__}: {exc}"
+
+        info = pair_infos.get(symbol)
+        if info is None:
+            return (
+                f"❌ **Pair `{symbol}` not found on Revolut X.** Available pairs: "
+                f"{', '.join(sorted(pair_infos.keys())[:10])}{'…' if len(pair_infos) > 10 else ''}"
+            )
+
+        try:
+            ticker = await exchange.get_ticker(symbol)
+            current_price = ticker.last
+        except Exception as exc:
+            return f"❌ **Couldn't fetch current price for {symbol}:** {exc}"
+    finally:
+        with contextlib.suppress(Exception):
+            await exchange.close()
+
+    # Compute the allocation the live loop would request on its first BUY.
+    risk = runtime.settings.risk
+    max_pct = Decimal(str(risk.max_position_size_pct))
+    balance = Decimal(str(initial_balance))
+    notional = balance * max_pct  # in the quote currency
+    if current_price <= 0:
+        return f"❌ **Invalid current price** ({current_price}) for {symbol}."
+    quantity = notional / current_price
+
+    rows = [
+        ("Symbol", info.symbol),
+        ("Status", info.status),
+        ("Current price", f"{current_price} {info.quote}"),
+        ("Configured balance", f"{balance} {info.quote}"),
+        ("max_position_size_pct", f"{max_pct * 100}%"),
+        ("Planned allocation", f"≈ {notional} {info.quote}"),
+        ("Planned quantity", f"≈ {quantity} {info.base}"),
+        ("min_order_size", f"{info.min_order_size} {info.base}"),
+        ("min_order_size_quote", f"{info.min_order_size_quote} {info.quote}"),
+        ("max_order_size", f"{info.max_order_size} {info.base}"),
+        ("base_step", f"{info.base_step} {info.base}"),
+    ]
+    body = "\n".join(f"| {label} | {value} |" for label, value in rows)
+    table = "| Field | Value |\n| --- | --- |\n" + body
+
+    reason = info.reject_reason(quantity=quantity, notional=notional)
+    if reason is None:
+        verdict = (
+            f"✅ **Order would clear all minimums** for `{symbol}`. The first "
+            f"BUY the live loop emits will request ~{quantity} {info.base} "
+            f"(~{notional} {info.quote})."
+        )
+    else:
+        verdict = (
+            f"❌ **Order would be rejected:** {reason}.\n\n"
+            "Fixes:\n"
+            f"- Raise `RISK_MAX_POSITION_SIZE_PCT` so the allocation clears the minimum.\n"
+            f"- Pick a lower-priced pair (e.g. an asset already in your wallet).\n"
+            f"- Top up the {info.quote} balance so a smaller percentage still clears."
+        )
+
+    return f"{verdict}\n\n{table}"
 
 
 async def test_connection(symbol: str) -> str:
@@ -394,6 +570,32 @@ def render() -> None:
                 info=mode_info,
             )
 
+        # Heartbeat row. Disabled by default, and disabled (greyed out)
+        # entirely when Discord isn't configured — the operator gets a
+        # clear hint why instead of a silent no-op when they tick the box.
+        discord_configured = runtime.settings.notifications.discord_enabled and bool(
+            runtime.settings.notifications.discord_webhook_url.get_secret_value()
+        )
+        with gr.Row():
+            heartbeat_enabled_input = gr.Checkbox(
+                value=False,
+                label="Discord heartbeat",
+                info=(
+                    "Send a periodic 'I'm alive' status embed to Discord."
+                    if discord_configured
+                    else "Disabled — configure NOTIFY_DISCORD_ENABLED + "
+                    "NOTIFY_DISCORD_WEBHOOK_URL in Space secrets first."
+                ),
+                interactive=discord_configured,
+            )
+            heartbeat_interval_input = gr.Number(
+                value=900.0,
+                label="Heartbeat interval (seconds)",
+                minimum=10,
+                info="900 = 15 min. Keep ≥ 60 to avoid Discord rate limits.",
+                interactive=discord_configured,
+            )
+
         with gr.Row():
             start_btn = gr.Button("Start", variant="primary")
             stop_btn = gr.Button("Stop", variant="stop")
@@ -407,7 +609,15 @@ def render() -> None:
         dataset_input.focus(fn=refresh_datasets, inputs=[dataset_input], outputs=[dataset_input])
         start_btn.click(
             fn=start_loop,
-            inputs=[strategy_input, dataset_input, interval_input, balance_input, mode_input],
+            inputs=[
+                strategy_input,
+                dataset_input,
+                interval_input,
+                balance_input,
+                mode_input,
+                heartbeat_enabled_input,
+                heartbeat_interval_input,
+            ],
             outputs=[status_output],
         )
         stop_btn.click(fn=stop_loop, inputs=[], outputs=[status_output])
@@ -436,3 +646,32 @@ def render() -> None:
                 inputs=[test_symbol_input],
                 outputs=[test_output],
             )
+
+            gr.Markdown(
+                "---\n\n"
+                "### Pre-flight order check\n"
+                "Look up the selected pair's `min_order_size` / "
+                "`min_order_size_quote` from Revolut X's `/configuration/pairs`, "
+                "then compare against the order the live loop would place "
+                "(balance * `RISK_MAX_POSITION_SIZE_PCT` / current price). "
+                "Surfaces 'this order would be rejected as dust' before you hit Start."
+            )
+            preflight_btn = gr.Button("Run pre-flight check", variant="secondary")
+            preflight_output = gr.Markdown()
+            preflight_btn.click(
+                fn=preflight_order,
+                inputs=[dataset_input, balance_input],
+                outputs=[preflight_output],
+            )
+
+        gr.Markdown(
+            "---\n\n"
+            "### Test Discord notification\n"
+            "Send a synthetic embed to the configured webhook so you can "
+            "verify trade alerts will land on your phone before you go live. "
+            "Surfaces the exact HTTP status if the webhook is misconfigured "
+            "(401/403 from a revoked webhook, 404 from a deleted webhook, etc.)."
+        )
+        discord_btn = gr.Button("Test Discord notification", variant="secondary")
+        discord_output = gr.Markdown()
+        discord_btn.click(fn=test_discord, inputs=[], outputs=[discord_output])

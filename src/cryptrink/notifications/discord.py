@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Self
 
@@ -13,8 +15,25 @@ from cryptrink.core.logging import get_logger
 
 if TYPE_CHECKING:
     from cryptrink.execution.models import Order, Position
+    from cryptrink.web.live_loop import LiveLoopState
 
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class DiscordTestResult:
+    """Outcome of an explicit ``DiscordNotifier.send_test`` call.
+
+    Returned to the Live tab's "Test Discord notification" handler so the
+    UI can surface the precise reason for a failure (HTTP 401 from a
+    revoked webhook, 404 from a deleted webhook, network error, …)
+    rather than the silent ``logger.warning`` the production trade path
+    uses.
+    """
+
+    ok: bool
+    status: int
+    detail: str
 
 
 class DiscordNotifier:
@@ -225,6 +244,123 @@ class DiscordNotifier:
             color=0xFF0000,  # Red
             fields=fields,
         )
+
+    async def send_heartbeat(self, state: LiveLoopState) -> None:
+        """Post a one-line "I'm still here" status embed.
+
+        Wired to :class:`LiveLoop`'s ``on_heartbeat`` callback so the
+        operator gets a periodic confirmation on their phone that the
+        loop is alive — independent of whether any signals fired. Lack
+        of a heartbeat for >2 intervals is the operator's cue that
+        something is wrong (Space crashed, Discord webhook died, etc.).
+
+        Honours ``self._enabled``; the top-level Live tab checkbox is
+        what gates whether these get sent at all.
+        """
+        if not self._enabled:
+            return
+
+        running_emoji = "🟢" if state.running else "⏹"
+        fields: list[dict[str, Any]] = [
+            {
+                "name": "Status",
+                "value": f"{running_emoji} {'Running' if state.running else 'Stopped'}",
+                "inline": True,
+            },
+            {"name": "Symbol", "value": state.symbol or "—", "inline": True},
+            {"name": "Strategy", "value": state.strategy_name or "—", "inline": True},
+            {"name": "Iterations", "value": str(state.iteration_count), "inline": True},
+            {"name": "Signals", "value": str(state.signal_count), "inline": True},
+            {"name": "Executions", "value": str(state.execution_count), "inline": True},
+        ]
+        if state.last_signal_type is not None:
+            when = (
+                state.last_signal_at.isoformat(timespec="seconds")
+                if state.last_signal_at is not None
+                else "—"
+            )
+            fields.append({"name": "Last signal", "value": f"{state.last_signal_type} @ {when}"})
+        if state.last_iteration_at is not None:
+            fields.append(
+                {
+                    "name": "Last iteration",
+                    "value": state.last_iteration_at.isoformat(timespec="seconds"),
+                    "inline": True,
+                }
+            )
+        if state.error_count > 0:
+            fields.append({"name": "Errors", "value": str(state.error_count), "inline": True})
+        if state.last_error is not None:
+            # Discord field values cap at 1024 chars; truncate defensively.
+            fields.append({"name": "Last error", "value": state.last_error[:900]})
+
+        await self._send_embed(
+            title="💓 Cryptrink heartbeat",
+            description=f"Live loop status as of {datetime.now(UTC).isoformat(timespec='seconds')}",
+            color=0x00FF00 if state.running and state.error_count == 0 else 0xFFAA00,
+            fields=fields,
+        )
+
+    async def send_test(self) -> DiscordTestResult:
+        """Send a synthetic embed and return what Discord said.
+
+        The trade-notification path swallows errors with ``logger.warning``
+        so a misconfigured webhook silently produces no Discord messages
+        and the operator has no idea why. This method exists for the
+        explicit "test the webhook" button on the Live tab: it always
+        builds a payload, always hits the webhook, and returns a
+        :class:`DiscordTestResult` with the HTTP status + body so the UI
+        can surface the actual reason for a failure.
+
+        The notifier's ``enabled`` flag is intentionally bypassed — the
+        operator is asking for the test, so we run it even if normal
+        notifications are turned off.
+        """
+        if not self._webhook_url:
+            return DiscordTestResult(
+                ok=False,
+                status=0,
+                detail="webhook URL is empty (set NOTIFY_DISCORD_WEBHOOK_URL)",
+            )
+
+        embed = {
+            "title": "🧪 Cryptrink test notification",
+            "description": (
+                "If you see this on your phone, the webhook is wired up and "
+                "trade alerts will land here too."
+            ),
+            "color": 0x0099FF,
+            "fields": [
+                {"name": "Sent at (UTC)", "value": datetime.now(UTC).isoformat(timespec="seconds")},
+                {"name": "Source", "value": "Live tab → Test Discord notification"},
+            ],
+            "footer": {"text": "Cryptrink Trading Agent"},
+        }
+        payload = {"embeds": [embed]}
+
+        own_session = self._session is None
+        session = self._session or aiohttp.ClientSession()
+        try:
+            async with session.post(self._webhook_url, json=payload) as response:
+                body = await response.text()
+                if response.status == 204:
+                    return DiscordTestResult(
+                        ok=True,
+                        status=204,
+                        detail="webhook returned 204 No Content (delivered)",
+                    )
+                return DiscordTestResult(
+                    ok=False,
+                    status=response.status,
+                    detail=body or f"HTTP {response.status} (no body)",
+                )
+        except aiohttp.ClientError as exc:
+            return DiscordTestResult(ok=False, status=0, detail=f"network error: {exc}")
+        except Exception as exc:  # pragma: no cover — defensive, surface anything else
+            return DiscordTestResult(ok=False, status=0, detail=f"unexpected: {exc}")
+        finally:
+            if own_session:
+                await session.close()
 
     async def _send_embed(
         self,

@@ -21,6 +21,7 @@ from cryptrink.strategies.base import (
 from cryptrink.web import live_loop as live_loop_module
 from cryptrink.web.live_loop import (
     LiveLoop,
+    LiveLoopState,
     get_active_loop,
     reset_active_loop,
     set_active_loop,
@@ -336,3 +337,131 @@ class TestSignalCallback:
 # Sanity import to ensure pandas is available (the indicators helper requires it).
 def test_pandas_is_imported() -> None:
     assert pd.__version__ is not None
+
+
+class TestHeartbeatCallback:
+    """The heartbeat task fires ``on_heartbeat(state)`` every
+    ``heartbeat_interval_seconds`` seconds, independent of the iteration
+    cadence. A misbehaving heartbeat callback must not stall the trading
+    loop, and ``stop()`` must drain the heartbeat task cleanly."""
+
+    async def test_heartbeat_fires_after_each_interval(self) -> None:
+        observed: list[LiveLoopState] = []
+
+        async def on_heartbeat(state: LiveLoopState) -> None:
+            observed.append(state)
+
+        loop = LiveLoop(
+            engine=_make_engine(),
+            strategy=_make_strategy(),
+            symbol="BTC-EUR",
+            data_feed=_make_data_feed(),
+            interval_seconds=60,
+            on_heartbeat=on_heartbeat,
+            heartbeat_interval_seconds=0.05,
+        )
+        await loop.start()
+        # Three intervals at 50ms ≈ 150ms; allow margin so CI doesn't
+        # flake. The heartbeat sleeps before the first beat.
+        await asyncio.sleep(0.18)
+        await loop.stop()
+        assert len(observed) >= 2
+        # Each heartbeat receives a LiveLoopState with the symbol set.
+        assert all(s.symbol == "BTC-EUR" for s in observed)
+
+    async def test_callback_failure_does_not_kill_heartbeat_task(self) -> None:
+        calls = 0
+
+        async def on_heartbeat(_: LiveLoopState) -> None:
+            nonlocal calls
+            calls += 1
+            # First call raises, subsequent ones return normally. The
+            # contract is "an exception in one callback must not kill
+            # later ones" — proven by reaching call #2 at all.
+            if calls == 1:
+                raise RuntimeError("webhook went sideways")
+
+        loop = LiveLoop(
+            engine=_make_engine(),
+            strategy=_make_strategy(),
+            symbol="BTC-EUR",
+            data_feed=_make_data_feed(),
+            interval_seconds=60,
+            on_heartbeat=on_heartbeat,
+            heartbeat_interval_seconds=0.05,
+        )
+        await loop.start()
+        # Generous timeout: ``logger.exception``'s Rich rendering can take
+        # ~100ms per call under pytest, so we don't gamble on tight windows.
+        await asyncio.sleep(0.6)
+        await loop.stop()
+        assert calls >= 2, f"heartbeat task died after first exception (calls={calls})"
+
+    async def test_no_heartbeat_task_when_callback_missing(self) -> None:
+        loop = LiveLoop(
+            engine=_make_engine(),
+            strategy=_make_strategy(),
+            symbol="BTC-EUR",
+            data_feed=_make_data_feed(),
+            interval_seconds=60,
+            on_heartbeat=None,
+            heartbeat_interval_seconds=0.05,
+        )
+        await loop.start()
+        # No callback ⇒ no heartbeat task spawned.
+        assert loop._heartbeat_task is None
+        await loop.stop()
+
+    async def test_no_heartbeat_task_when_interval_missing(self) -> None:
+        async def on_heartbeat(_: LiveLoopState) -> None:
+            pass
+
+        loop = LiveLoop(
+            engine=_make_engine(),
+            strategy=_make_strategy(),
+            symbol="BTC-EUR",
+            data_feed=_make_data_feed(),
+            interval_seconds=60,
+            on_heartbeat=on_heartbeat,
+            heartbeat_interval_seconds=None,
+        )
+        await loop.start()
+        assert loop._heartbeat_task is None
+        await loop.stop()
+
+    async def test_rejects_non_positive_heartbeat_interval(self) -> None:
+        async def on_heartbeat(_: LiveLoopState) -> None:
+            pass
+
+        with pytest.raises(ValueError, match="heartbeat_interval_seconds"):
+            LiveLoop(
+                engine=_make_engine(),
+                strategy=_make_strategy(),
+                symbol="BTC-EUR",
+                data_feed=_make_data_feed(),
+                interval_seconds=60,
+                on_heartbeat=on_heartbeat,
+                heartbeat_interval_seconds=0,
+            )
+
+    async def test_stop_drains_heartbeat_task(self) -> None:
+        """``stop()`` must wait for the heartbeat task to finish — a
+        slow webhook in flight gets up to 5 s, then is cancelled. A
+        leaked heartbeat task would log warnings forever after stop."""
+
+        async def on_heartbeat(_: LiveLoopState) -> None:
+            return None
+
+        loop = LiveLoop(
+            engine=_make_engine(),
+            strategy=_make_strategy(),
+            symbol="BTC-EUR",
+            data_feed=_make_data_feed(),
+            interval_seconds=60,
+            on_heartbeat=on_heartbeat,
+            heartbeat_interval_seconds=0.05,
+        )
+        await loop.start()
+        await asyncio.sleep(0.05)
+        await loop.stop()
+        assert loop._heartbeat_task is None
