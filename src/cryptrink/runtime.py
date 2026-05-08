@@ -20,7 +20,7 @@ from cryptrink.strategies.mean_reversion import (
 from cryptrink.strategies.trend_following import SmaCrossoverStrategy
 
 if TYPE_CHECKING:
-    from cryptrink.strategies.base import BaseStrategy
+    from cryptrink.strategies.base import BaseStrategy, ParameterSpec
 
 BUILTIN_STRATEGIES: dict[str, type[BaseStrategy]] = {
     "sma_crossover": SmaCrossoverStrategy,
@@ -41,11 +41,13 @@ def ensure_builtins_registered() -> None:
             registry.register(name, factory)
 
 
-def resolve_strategy(name: str) -> BaseStrategy:
-    """Resolve a strategy name to an instance using default parameters.
+def resolve_strategy(name: str, **params: object) -> BaseStrategy:
+    """Resolve a strategy name to an instance.
 
     Args:
         name: Registered strategy name.
+        **params: Optional ``__init__`` keyword arguments forwarded to the
+            registered factory. Omit to use the strategy's defaults.
 
     Returns:
         Instantiated :class:`BaseStrategy`.
@@ -55,7 +57,24 @@ def resolve_strategy(name: str) -> BaseStrategy:
             for translating this into their own UX (typer.Exit, gr.Error, …).
     """
     ensure_builtins_registered()
-    return strategy_registry.create(name)
+    return strategy_registry.create(name, **params)
+
+
+def get_strategy_param_schema(name: str) -> list[ParameterSpec]:
+    """Return the :class:`ParameterSpec` list for a registered strategy.
+
+    Looks up the strategy class via :data:`BUILTIN_STRATEGIES` and delegates
+    to its :meth:`BaseStrategy.param_schema` classmethod. For non-builtin
+    strategies registered via factory functions we fall back to
+    instantiating with defaults and reading the schema off the instance.
+    """
+    ensure_builtins_registered()
+    cls = BUILTIN_STRATEGIES.get(name)
+    if cls is not None:
+        return cls.param_schema()
+    # Fallback for externally-registered factories.
+    instance = strategy_registry.create(name)
+    return type(instance).param_schema()
 
 
 def build_session_factory(db_url: str) -> async_sessionmaker[AsyncSession]:
