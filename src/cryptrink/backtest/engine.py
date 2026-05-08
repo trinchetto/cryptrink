@@ -231,13 +231,31 @@ class BacktestEngine:
                 signal=signal,
             )
 
-            # Record equity at this point
-            current_equity = self._executor.balance
-            self._equity_curve.append((candle_ts, current_equity))
+            # Record mark-to-market equity at this candle.
+            #
+            # ``self._executor.balance`` is *cash only* — a BUY drains it by
+            # the notional + fee and the asset side isn't tracked there. So
+            # while a long position is open the cash balance dips by
+            # ~position_value and the equity curve, if it just plotted the
+            # cash, would render as a sawtooth that diverges from the
+            # metrics table's mark-to-market final equity. We instead price
+            # the open position at the current close so the curve reflects
+            # actual portfolio value at every step.
+            current_price = Decimal(str(candle["close"]))
+            self._equity_curve.append(
+                (candle_ts, self._mark_to_market_equity(symbol, current_price))
+            )
 
         # 7. Close any open positions at end
         final_price = Decimal(str(ohlcv_data[-1]["close"]))
         await self._close_all_positions(symbol, final_price, end_time)
+
+        # 7b. Append the final post-unwind equity. Without this, the last
+        #     point on the curve is the pre-unwind mark-to-market — close
+        #     to the metrics table's ``ending_equity`` but off by the exit
+        #     fee. Logging the actual ``ending_equity`` here makes the
+        #     curve's right edge match the table exactly.
+        self._equity_curve.append((end_time, self._executor.balance))
 
         # 8. Calculate comprehensive metrics
         result = await self._calculate_results(
@@ -340,6 +358,21 @@ class BacktestEngine:
         df.set_index("timestamp", inplace=True)
 
         return df
+
+    def _mark_to_market_equity(self, symbol: str, current_price: Decimal) -> Decimal:
+        """Total portfolio value: cash + open-position value at ``current_price``.
+
+        ``BacktestExecutor.balance`` is just cash; the open position is held
+        as ``{quantity, entry_price}`` in the executor's ``_positions``
+        dict. To plot a meaningful equity curve we must add the
+        mark-to-market value of any open long back in.
+        """
+        equity = self._executor.balance
+        position = self._executor.get_position(symbol)
+        if position is not None:
+            quantity = Decimal(str(position.get("quantity", "0")))
+            equity += quantity * current_price
+        return equity
 
     @staticmethod
     def _coerce_candle_datetime(value: object) -> datetime:

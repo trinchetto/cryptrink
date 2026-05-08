@@ -977,3 +977,73 @@ class TestBacktestEnginePositionTrackerSync:
         assert position.status == "closed"
         assert position.entry_order_id is not None
         assert position.exit_order_id is not None
+
+
+class TestBacktestEngineEquityCurveMatchesMetrics:
+    """Regression: the equity curve and the metrics table must agree.
+
+    Before the mark-to-market fix, the curve recorded only
+    ``executor.balance`` (cash). While a long was open, BUY had
+    drained the cash by ~position_value and the curve dipped by that
+    amount, even when the asset's market value was unchanged. Worse,
+    the metrics table ran *after* the end-of-backtest unwind so it
+    showed a reasonable ``ending_equity`` while the curve's last point
+    was the pre-unwind cash balance — the user reported a curve ending
+    at €8800 alongside a metrics table claiming €10,029.16.
+
+    These tests pin the new contract:
+    1. While a long is open, equity = cash + quantity * current_close.
+    2. The final point on the curve equals ``ending_equity`` so the
+       chart's right edge matches the metrics table.
+    """
+
+    @pytest.mark.asyncio
+    async def test_equity_curve_does_not_dip_into_cash_while_long(self, dummy_data_feed):
+        """After ENTRY_LONG opens a position, the equity curve points must
+        stay near the initial balance instead of dropping to ``balance -
+        notional`` (i.e. ``- position_value``)."""
+        engine = BacktestEngine(
+            strategy=SimpleBuyHoldStrategy(),
+            data_feed=dummy_data_feed,
+            initial_balance=Decimal("10000"),
+        )
+        result = await engine.run(
+            symbol="BTC-USD",
+            start_time=datetime(2024, 1, 1, tzinfo=UTC),
+            end_time=datetime(2024, 1, 7, tzinfo=UTC),
+            timeframe="1h",
+            lookback_periods=10,
+        )
+        # Pull the in-window equity points (skip the seed at start_time
+        # which is exactly the initial balance) and assert none of them
+        # dip more than 5% — without the MtM fix they'd dive ~10% on the
+        # candle right after the entry executes.
+        in_window = [eq for ts, eq in result.equity_curve if ts > datetime(2024, 1, 1, tzinfo=UTC)]
+        assert in_window, "Expected at least one in-window equity point"
+        floor = Decimal("9500")  # 95% of initial — comfortably above the
+        # naive cash-balance trough that the previous bug produced.
+        for eq in in_window:
+            assert eq >= floor, (
+                f"Equity curve dipped to {eq} — it likely fell back to recording "
+                f"cash-only balance instead of mark-to-market portfolio value."
+            )
+
+    @pytest.mark.asyncio
+    async def test_equity_curve_last_point_matches_metrics_ending_equity(self, dummy_data_feed):
+        engine = BacktestEngine(
+            strategy=SimpleBuyHoldStrategy(),
+            data_feed=dummy_data_feed,
+            initial_balance=Decimal("10000"),
+        )
+        result = await engine.run(
+            symbol="BTC-USD",
+            start_time=datetime(2024, 1, 1, tzinfo=UTC),
+            end_time=datetime(2024, 1, 7, tzinfo=UTC),
+            timeframe="1h",
+            lookback_periods=10,
+        )
+        # The final equity_curve entry must equal metrics.ending_equity
+        # to the cent — that's the contract the user complained about
+        # ("curve ends at €8800, table says €10,029").
+        last_curve_equity = result.equity_curve[-1][1]
+        assert last_curve_equity == result.metrics.ending_equity
