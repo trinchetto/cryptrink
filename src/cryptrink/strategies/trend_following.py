@@ -9,6 +9,7 @@ from decimal import Decimal
 from cryptrink.data.indicators import Indicators
 from cryptrink.strategies.base import (
     BaseStrategy,
+    ParameterSpec,
     Signal,
     SignalStrength,
     SignalType,
@@ -216,3 +217,38 @@ class SmaCrossoverStrategy(BaseStrategy):
         """
         self._prev_fast_sma = None
         self._prev_slow_sma = None
+
+    @classmethod
+    def param_schema(cls) -> list[ParameterSpec]:
+        return [
+            ParameterSpec(
+                name="fast_period",
+                param_type=int,
+                default=10,
+                minimum=2,
+                maximum=100,
+                step=1,
+                label="Fast period",
+                help="Window of the fast SMA (must be < slow period).",
+            ),
+            ParameterSpec(
+                name="slow_period",
+                param_type=int,
+                default=30,
+                minimum=3,
+                maximum=300,
+                step=1,
+                label="Slow period",
+                help="Window of the slow SMA (must be > fast period).",
+            ),
+            ParameterSpec(
+                name="signal_threshold",
+                param_type=float,
+                default=0.001,
+                minimum=0.0,
+                maximum=0.05,
+                step=0.0005,
+                label="Signal threshold",
+                help="Minimum fractional gap between SMAs to register a crossover.",
+            ),
+        ]

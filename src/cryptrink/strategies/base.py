@@ -1,5 +1,6 @@
 """Abstract base class for trading strategies."""
 
+import inspect
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -10,6 +11,40 @@ from typing import Any
 import pandas as pd
 
 from cryptrink.exchange.base import OrderSide
+
+
+@dataclass(frozen=True)
+class ParameterSpec:
+    """Declarative description of a strategy ``__init__`` parameter.
+
+    Used by the web UI to render numeric inputs and by the optimizer to
+    drive grid / TPE search. The default implementation of
+    :meth:`BaseStrategy.param_schema` introspects the ``__init__``
+    signature; strategies may override it to provide tighter bounds and
+    nicer labels.
+    """
+
+    name: str
+    param_type: type
+    default: float | int
+    minimum: float | int | None = None
+    maximum: float | int | None = None
+    step: float | int | None = None
+    label: str | None = None
+    help: str | None = None
+
+    @property
+    def display_label(self) -> str:
+        return self.label or self.name.replace("_", " ").capitalize()
+
+    def coerce(self, value: float | int) -> float | int:
+        """Coerce ``value`` to this spec's type, clamping to bounds if set."""
+        if self.minimum is not None and value < self.minimum:
+            value = self.minimum
+        if self.maximum is not None and value > self.maximum:
+            value = self.maximum
+        coerced: float | int = self.param_type(value)
+        return coerced
 
 
 class SignalType(StrEnum):
@@ -229,3 +264,43 @@ class BaseStrategy(ABC):
         or between backtesting runs.
         """
         pass
+
+    @classmethod
+    def param_schema(cls) -> list[ParameterSpec]:
+        """Describe the tunable parameters this strategy accepts.
+
+        The default implementation introspects ``__init__`` and emits a
+        :class:`ParameterSpec` for every numeric parameter with a
+        default value. Strategies should override this to provide
+        meaningful bounds (``minimum``, ``maximum``, ``step``) and
+        labels — those drive both the manual-tuning UI controls and the
+        optimizer's search space.
+        """
+        # ``eval_str=True`` resolves string annotations to real types so
+        # this works under ``from __future__ import annotations`` (where
+        # ``param.annotation`` is the source string ``"int"`` rather
+        # than the ``int`` builtin). Strategies are written under that
+        # future import in this codebase, so we have to opt in here.
+        sig = inspect.signature(cls.__init__, eval_str=True)
+        specs: list[ParameterSpec] = []
+        for name, param in sig.parameters.items():
+            if name in ("self", "args", "kwargs"):
+                continue
+            if param.default is inspect.Parameter.empty:
+                continue
+            annotation = param.annotation
+            if annotation is int:
+                ptype: type = int
+            elif annotation is float:
+                ptype = float
+            else:
+                # Skip non-numeric parameters; the UI only tunes numbers.
+                continue
+            specs.append(
+                ParameterSpec(
+                    name=name,
+                    param_type=ptype,
+                    default=param.default,
+                )
+            )
+        return specs

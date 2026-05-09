@@ -11,6 +11,7 @@ import pandas as pd
 from cryptrink.data.indicators import Indicators
 from cryptrink.strategies.base import (
     BaseStrategy,
+    ParameterSpec,
     Signal,
     SignalStrength,
     SignalType,
@@ -251,6 +252,61 @@ class RsiMeanReversionStrategy(BaseStrategy):
         """
         pass
 
+    @classmethod
+    def param_schema(cls) -> list[ParameterSpec]:
+        return [
+            ParameterSpec(
+                name="rsi_period",
+                param_type=int,
+                default=14,
+                minimum=2,
+                maximum=100,
+                step=1,
+                label="RSI period",
+                help="Lookback window for RSI calculation.",
+            ),
+            ParameterSpec(
+                name="oversold_threshold",
+                param_type=float,
+                default=30.0,
+                minimum=5.0,
+                maximum=49.0,
+                step=1.0,
+                label="Oversold threshold",
+                help="RSI level that triggers an entry-long.",
+            ),
+            ParameterSpec(
+                name="overbought_threshold",
+                param_type=float,
+                default=70.0,
+                minimum=51.0,
+                maximum=95.0,
+                step=1.0,
+                label="Overbought threshold",
+                help="RSI level that triggers an exit-long.",
+            ),
+            ParameterSpec(
+                name="extreme_oversold",
+                param_type=float,
+                default=20.0,
+                minimum=1.0,
+                maximum=48.0,
+                step=1.0,
+                label="Extreme oversold",
+                help="RSI level for STRONG buy signal (must be < oversold).",
+            ),
+            ParameterSpec(
+                name="extreme_overbought",
+                param_type=float,
+                default=80.0,
+                minimum=52.0,
+                maximum=99.0,
+                step=1.0,
+                label="Extreme overbought",
+                help="RSI level for STRONG sell signal (must be > overbought).",
+            ),
+        ]
+
 
 class BollingerBandsStrategy(BaseStrategy):
     """Bollinger Bands mean reversion strategy.
@@ -444,3 +500,38 @@ class BollingerBandsStrategy(BaseStrategy):
         Bollinger Bands strategy is stateless, so nothing to reset.
         """
         pass
+
+    @classmethod
+    def param_schema(cls) -> list[ParameterSpec]:
+        return [
+            ParameterSpec(
+                name="period",
+                param_type=int,
+                default=20,
+                minimum=2,
+                maximum=200,
+                step=1,
+                label="Period",
+                help="Lookback window for the SMA and the band width.",
+            ),
+            ParameterSpec(
+                name="std_dev",
+                param_type=float,
+                default=2.0,
+                minimum=0.5,
+                maximum=5.0,
+                step=0.1,
+                label="Std deviations",
+                help="Number of standard deviations for the upper / lower band.",
+            ),
+            ParameterSpec(
+                name="penetration_threshold",
+                param_type=float,
+                default=0.001,
+                minimum=0.0,
+                maximum=0.05,
+                step=0.0005,
+                label="Penetration threshold",
+                help="Minimum fractional band penetration to trigger a signal.",
+            ),
+        ]

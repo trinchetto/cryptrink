@@ -38,6 +38,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from cryptrink.backtest.engine import BacktestEngine
+from cryptrink.backtest.optimize import OBJECTIVES
 from cryptrink.data.feed import HistoricalDataFeed
 from cryptrink.data.storage import OHLCV as OHLCVModel
 from cryptrink.data.storage import OHLCVRepository
@@ -51,12 +52,32 @@ from cryptrink.web.state import (
     list_datasets,
     list_datasets_sync,
 )
+from cryptrink.web.tabs.backtest_tuning import (
+    ManualPanel,
+    TuningPanel,
+    apply_best_params,
+    decode_manual_params,
+    empty_trials_df,
+    flatten_components,
+    render_manual_panels,
+    render_tuning_panels,
+    run_optimization,
+    visibility_updates,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from cryptrink.backtest.result import BacktestResult
     from cryptrink.strategies.base import StrategyContext
+
+
+# Populated by :func:`render` so the tuning module can resolve which
+# component holds which strategy's parameter without a stronger
+# coupling. Module-global because Gradio's render callback is the only
+# place that has access to the live ``gr.Group`` instances.
+_manual_panels: dict[str, ManualPanel] = {}
+_tuning_panels: dict[str, TuningPanel] = {}
 
 
 # ----------------------------------------------------------------------
@@ -229,6 +250,7 @@ async def run_backtest(
     start_date: str,
     end_date: str,
     initial_capital: float,
+    *manual_param_values: object,
 ) -> AsyncIterator[
     tuple[str, str, matplotlib.figure.Figure | None, matplotlib.figure.Figure | None, pd.DataFrame]
 ]:
@@ -237,6 +259,12 @@ async def run_backtest(
     Yields ``(summary_md, terminal_md, equity_fig, price_fig, trades_df)``
     tuples. Every yield is a complete render of every output, so Gradio
     can update them incrementally.
+
+    ``manual_param_values`` is the flat tuple of every strategy's
+    parameter ``gr.Number`` inputs, in the order
+    :func:`flatten_components` of :data:`_manual_panels` produces. We
+    only consume the slice belonging to ``strategy_name``; the rest are
+    inputs of currently-hidden panels.
     """
     summary_md = ""
     # ``None`` clears any previous plot and renders a blank gr.Plot.
@@ -313,7 +341,19 @@ async def run_backtest(
         return
 
     try:
-        wrapped_strategy = resolve_strategy(strategy_name)
+        manual_params = decode_manual_params(strategy_name, manual_param_values, _manual_panels)
+    except (KeyError, ValueError) as exc:
+        yield (
+            summary_md,
+            _emit_failure(f"backtest: invalid parameter input for {strategy_name!r}", exc),
+            equity_fig,
+            price_fig,
+            trades_df,
+        )
+        return
+
+    try:
+        wrapped_strategy = resolve_strategy(strategy_name, **manual_params)
     except KeyError as exc:
         yield (
             summary_md,
@@ -323,6 +363,21 @@ async def run_backtest(
             trades_df,
         )
         return
+    except (ValueError, TypeError) as exc:
+        yield (
+            summary_md,
+            _emit_failure(
+                f"backtest: strategy {strategy_name!r} rejected parameters {manual_params}",
+                exc,
+            ),
+            equity_fig,
+            price_fig,
+            trades_df,
+        )
+        return
+
+    if manual_params:
+        _emit("backtest: parameters — " + ", ".join(f"{k}={v}" for k, v in manual_params.items()))
 
     if wrapped_strategy.timeframe != timeframe:
         yield (
@@ -640,6 +695,9 @@ def _trades_dataframe(result: BacktestResult) -> pd.DataFrame:
 def render() -> None:
     """Render the Backtest tab UI inside an enclosing :class:`gr.Tabs`."""
     runtime = get_runtime()
+    # ``ensure_builtins_registered`` runs from the runtime, but resolve_strategy
+    # is the lazier path; the Backtest tab is mounted after the runtime is
+    # already up so this list is non-empty in practice.
     strategy_options = strategy_registry.list_strategies()
     default_strategy = (
         runtime.settings.default_strategy
@@ -652,6 +710,9 @@ def render() -> None:
             "Replay a strategy over a stored OHLCV ``(symbol, timeframe)`` group. "
             "The Dataset dropdown lists what is actually persisted in the database "
             "— if it's empty, open the Data tab and run Backfill first.\n\n"
+            "Tune parameters by hand in the **Strategy parameters** accordion, or "
+            "let **Auto-tuning** sweep them with grid search or Optuna's TPE sampler "
+            "and pick the combination that maximises the objective you choose.\n\n"
             "The terminal at the bottom logs every step of the run, including the "
             "histogram of signals the strategy emitted, so you can tell whether "
             "the strategy is firing entries at all."
@@ -686,6 +747,56 @@ def render() -> None:
             start_input = gr.Textbox(value="2024-01-01", label="Start (YYYY-MM-DD)")
             end_input = gr.Textbox(value="", label="End (YYYY-MM-DD, blank = now)")
             capital_input = gr.Number(value=10000.0, label="Initial capital (EUR)")
+
+        with gr.Accordion("Strategy parameters", open=True):
+            global _manual_panels
+            _manual_panels = render_manual_panels(strategy_options, default_strategy)
+        manual_components = flatten_components(_manual_panels)
+
+        with gr.Accordion("Auto-tuning", open=False):
+            gr.Markdown(
+                "Sweep one or more parameters and pick the combination that "
+                "maximises the chosen objective. Tuned parameters override "
+                "the manual values above for each trial; untuned parameters "
+                "keep their manual value."
+            )
+            with gr.Row():
+                opt_mode_input = gr.Radio(
+                    choices=[("Grid search", "grid"), ("Optuna TPE", "tpe")],
+                    value="grid",
+                    label="Search mode",
+                )
+                opt_objective_input = gr.Dropdown(
+                    choices=[(label, key) for key, (_dir, label) in OBJECTIVES.items()],
+                    value="total_return_pct",
+                    label="Objective",
+                )
+                opt_n_trials_input = gr.Slider(
+                    minimum=5,
+                    maximum=200,
+                    value=30,
+                    step=1,
+                    label="TPE trials (ignored for grid)",
+                )
+
+            global _tuning_panels
+            _tuning_panels = render_tuning_panels(strategy_options, default_strategy)
+            tuning_components = flatten_components(_tuning_panels)
+
+            with gr.Row():
+                run_opt_btn = gr.Button("Run optimization", variant="primary")
+                apply_best_btn = gr.Button("Apply best to manual", variant="secondary")
+            opt_summary_md = gr.Markdown(
+                value="_Run an optimisation to see the best parameters here._"
+            )
+            opt_trials_df = gr.Dataframe(
+                value=empty_trials_df(),
+                label="Top trials (sorted by objective)",
+            )
+            # Holds the most recent OptimizationResult so "Apply best"
+            # can push best_params back into the manual inputs without
+            # re-running the sweep.
+            opt_result_state = gr.State(value=None)
 
         with gr.Row():
             run_btn = gr.Button("Run backtest", variant="primary")
@@ -734,9 +845,55 @@ def render() -> None:
             outputs=[start_input, end_input],
         )
 
+        # Strategy change → toggle which manual + tuning panel is visible.
+        # Both panel sets share the same strategy axis; we update them
+        # in a single callback by concatenating the updates.
+        manual_groups = [panel.group for panel in _manual_panels.values()]
+        tuning_groups = [panel.group for panel in _tuning_panels.values()]
+
+        def _on_strategy_change(strategy_name: str) -> list[object]:
+            manual_updates = visibility_updates(strategy_name, _manual_panels)
+            tuning_updates = visibility_updates(strategy_name, _tuning_panels)
+            return [*manual_updates, *tuning_updates]
+
+        strategy_input.change(
+            fn=_on_strategy_change,
+            inputs=[strategy_input],
+            outputs=[*manual_groups, *tuning_groups],
+        )
+
         run_btn.click(
             fn=run_backtest,
-            inputs=[strategy_input, dataset_input, start_input, end_input, capital_input],
+            inputs=[
+                strategy_input,
+                dataset_input,
+                start_input,
+                end_input,
+                capital_input,
+                *manual_components,
+            ],
             outputs=[summary_output, terminal, equity_output, candle_output, trades_output],
         )
         clear_log_btn.click(fn=clear_log, inputs=[], outputs=[terminal])
+
+        run_opt_btn.click(
+            fn=run_optimization,
+            inputs=[
+                strategy_input,
+                dataset_input,
+                start_input,
+                end_input,
+                capital_input,
+                opt_mode_input,
+                opt_objective_input,
+                opt_n_trials_input,
+                *manual_components,
+                *tuning_components,
+            ],
+            outputs=[opt_summary_md, terminal, opt_trials_df, opt_result_state],
+        )
+        apply_best_btn.click(
+            fn=apply_best_params,
+            inputs=[strategy_input, opt_result_state],
+            outputs=manual_components,
+        )
