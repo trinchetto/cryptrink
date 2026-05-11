@@ -36,6 +36,7 @@ from cryptrink.data.storage import OHLCV as OHLCVModel
 from cryptrink.data.storage import OHLCVRepository
 from cryptrink.execution.models import Position
 from cryptrink.portfolio.engine import PortfolioBacktestEngine
+from cryptrink.portfolio.import_ import build_portfolio_from_balances
 from cryptrink.portfolio.models import (
     dump_yaml,
     example_portfolio,
@@ -48,7 +49,8 @@ from cryptrink.portfolio.storage import (
     load_portfolio,
     save_portfolio,
 )
-from cryptrink.web.state import get_runtime
+from cryptrink.web.live_setup import has_revolutx_credentials
+from cryptrink.web.state import get_runtime, list_datasets
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -157,6 +159,113 @@ def delete_portfolio_handler(name: str | None) -> tuple[object, str, str]:
     new_value = names[0] if names else None
     log = _emit(f"portfolio: deleted {name!r}")
     return gr.update(choices=names, value=new_value), "", log
+
+
+# ----------------------------------------------------------------------
+# Import from Revolut X
+# ----------------------------------------------------------------------
+
+
+async def _stored_pairs(timeframe: str) -> set[str]:
+    """Return ``{symbol}`` for which we already have ``(symbol, timeframe)`` candles.
+
+    Used to emit a per-allocation "needs backfill" warning right after
+    an import so the operator knows to top up OHLCV before running a
+    backtest. Pulled out of the import handler so it can be tested in
+    isolation later if we want.
+    """
+    datasets = await list_datasets()
+    return {ds.symbol for ds in datasets if ds.timeframe == timeframe}
+
+
+async def import_from_revolutx(timeframe: str) -> tuple[str, str]:
+    """Snapshot Revolut X balances and seed the editor with a YAML draft.
+
+    Refuses to run when Revolut X credentials are not configured —
+    same gate the Live tab uses, so the operator's mental model is
+    consistent. The exchange client is opened and closed inside this
+    handler; we don't reuse a long-lived client because the import is a
+    one-shot operation and the rest of the Portfolio tab never needs to
+    talk to Revolut.
+    """
+    runtime = get_runtime()
+    if not has_revolutx_credentials(runtime.settings):
+        return "", _emit_failure(
+            "import: Revolut X credentials are not configured. "
+            "Set REVOLUTX_API_KEY and REVOLUTX_PRIVATE_KEY (or "
+            "REVOLUTX_PRIVATE_KEY_PATH) and reboot the Space."
+        )
+
+    # Imported here rather than at module top so the Portfolio tab
+    # doesn't pull in the Revolut HTTP stack on Spaces that don't use
+    # Live mode at all.
+    from cryptrink.exchange.revolutx import RevolutXExchange
+
+    revolutx = runtime.settings.revolutx
+    try:
+        private_key_b64 = revolutx.get_private_key()
+    except ValueError as exc:
+        return "", _emit_failure("import: failed to load private key", exc)
+
+    exchange = RevolutXExchange(
+        api_key=revolutx.api_key.get_secret_value(),
+        private_key_base64=private_key_b64,
+        base_url=revolutx.base_url,
+    )
+
+    _emit(f"import: connecting to Revolut X ({revolutx.base_url})…")
+    try:
+        try:
+            await exchange.connect()
+        except Exception as exc:
+            return "", _emit_failure("import: connect failed", exc)
+
+        try:
+            result = await build_portfolio_from_balances(
+                exchange,
+                name="revolutx_import",
+                timeframe=timeframe,
+            )
+        except ValueError as exc:
+            return "", _emit_failure(f"import: {exc}")
+        except Exception as exc:
+            return "", _emit_failure("import: unexpected error fetching balances", exc)
+    finally:
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            await exchange.close()
+
+    # Surface per-symbol skipped warnings so the operator can see which
+    # holdings didn't make it into the portfolio (and why).
+    for warning in result.warnings:
+        _emit(f"import: WARN — {warning}")
+
+    # OHLCV existence check. The portfolio backtest needs candles for
+    # every symbol at the chosen timeframe — without them ``engine.run``
+    # raises "No historical data" with a generic message. Surfacing the
+    # gap here makes the next step (Data tab → Backfill) obvious.
+    try:
+        present = await _stored_pairs(timeframe)
+    except Exception as exc:
+        _emit_failure("import: could not list stored datasets", exc)
+        present = set()
+
+    missing = [a.symbol for a in result.portfolio.allocations if a.symbol not in present]
+    if missing:
+        _emit(
+            "import: WARN — no OHLCV @ "
+            f"{timeframe} for: {', '.join(missing)}. "
+            "Open the Data tab and run Backfill before running this portfolio's backtest."
+        )
+
+    log = _emit(
+        f"import: drafted portfolio with {len(result.portfolio.allocations)} "
+        f"allocation(s), quote={result.quote_currency}, total_equity="
+        f"{result.total_equity:.2f} {result.quote_currency}. "
+        "Review the YAML and click Save when you're happy."
+    )
+    return dump_yaml(result.portfolio), log
 
 
 # ----------------------------------------------------------------------
@@ -497,6 +606,9 @@ _INTRO = (
 
 def render() -> None:
     """Render the Portfolio tab UI inside an enclosing :class:`gr.Tabs`."""
+    runtime = get_runtime()
+    creds_present = has_revolutx_credentials(runtime.settings)
+
     initial_choices = _portfolio_choices()
     initial_value = initial_choices[0] if initial_choices else None
     initial_yaml = ""
@@ -521,6 +633,35 @@ def render() -> None:
             refresh_btn = gr.Button("Refresh", variant="secondary")
             new_btn = gr.Button("New (example)", variant="secondary")
             delete_btn = gr.Button("Delete", variant="stop")
+
+        # Import-from-Revolut row. ``interactive`` flips to False when no
+        # credentials are present so the button is visibly inert rather
+        # than failing on click; the markdown right next to it explains
+        # why. Same pattern the Live tab uses for its credential-gated
+        # controls.
+        with gr.Row():
+            import_timeframe_input = gr.Dropdown(
+                choices=["1m", "5m", "15m", "30m", "1h", "4h", "1d"],
+                value="1h",
+                label="Timeframe for imported portfolio",
+                scale=1,
+            )
+            import_btn = gr.Button(
+                "Import from Revolut X",
+                variant="secondary",
+                interactive=creds_present,
+                scale=1,
+            )
+            import_hint = gr.Markdown(
+                value=(
+                    "_Snapshots your live Revolut X holdings into the editor as "
+                    "a `rsi_mean_reversion` allocation per pair. Quote currency = "
+                    "fiat with the largest balance. The YAML isn't saved until "
+                    "you click Save._"
+                    if creds_present
+                    else "_Revolut X credentials are not configured — Import is disabled._"
+                ),
+            )
 
         editor = gr.Code(
             value=initial_yaml,
@@ -584,6 +725,16 @@ def render() -> None:
             inputs=[portfolio_dropdown],
             outputs=[portfolio_dropdown, editor, terminal],
         )
+
+        import_btn.click(
+            fn=import_from_revolutx,
+            inputs=[import_timeframe_input],
+            outputs=[editor, terminal],
+        )
+
+        # Keep the lint happy: ``import_hint`` is rendered for the
+        # operator but never wired into any callback.
+        _ = import_hint
 
         run_btn.click(
             fn=run_portfolio_backtest,
