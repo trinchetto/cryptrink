@@ -492,7 +492,9 @@ def build_workspace(demo: gr.Blocks, screen_builders: dict[str, Callable[[], Non
 
     def _make_filter(selected: str) -> Callable[[], list[object]]:
         def _set() -> list[object]:
-            chip_updates = [gr.update(elem_classes=_chip_classes(n == selected)) for n in TERM_FILTERS]
+            chip_updates = [
+                gr.update(elem_classes=_chip_classes(n == selected)) for n in TERM_FILTERS
+            ]
             return [terminal_html(web_state.get_log_events(selected)), selected, *chip_updates]
 
         return _set

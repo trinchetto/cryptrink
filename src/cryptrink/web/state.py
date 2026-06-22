@@ -106,9 +106,7 @@ class WebRuntime:
     cached_symbols: list[str] = field(default_factory=list)
     # --- redesign UI state (global; single-operator Space) ---
     mode: str = "paper"
-    log_buffer: deque[LogEvent] = field(
-        default_factory=lambda: deque(maxlen=LOG_BUFFER_MAX)
-    )
+    log_buffer: deque[LogEvent] = field(default_factory=lambda: deque(maxlen=LOG_BUFFER_MAX))
     last_synced: dict[str, str] = field(default_factory=dict)
 
 

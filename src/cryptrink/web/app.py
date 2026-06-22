@@ -80,7 +80,7 @@ def build_demo() -> gr.Blocks:
                 "dashboard": dashboard.render,
                 "data": data.render,
                 "settings": settings.render,
-            }
+            },
         )
         demo.load(fn=None, js=theme.boot_js())
 

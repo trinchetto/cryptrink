@@ -799,9 +799,7 @@ def render() -> None:
                 tuning_components = flatten_components(_tuning_panels)
 
                 with gr.Row():
-                    run_opt_btn = gr.Button(
-                        "Run optimization", elem_classes=["ck-btn-primary"]
-                    )
+                    run_opt_btn = gr.Button("Run optimization", elem_classes=["ck-btn-primary"])
                     apply_best_btn = gr.Button(
                         "Apply best to manual", elem_classes=["ck-btn-secondary"]
                     )
@@ -831,10 +829,7 @@ def render() -> None:
                 gr.HTML('<div class="ck-card-title">Equity curve</div>')
                 equity_output = gr.Plot()
             with gr.Group(elem_classes=["ck-card"]):
-                gr.HTML(
-                    '<div class="ck-card-title">Close price '
-                    "(data the strategy saw)</div>"
-                )
+                gr.HTML('<div class="ck-card-title">Close price (data the strategy saw)</div>')
                 candle_output = gr.Plot()
             with gr.Group(elem_classes=["ck-card"]):
                 gr.HTML('<div class="ck-card-title">Closed trades</div>')

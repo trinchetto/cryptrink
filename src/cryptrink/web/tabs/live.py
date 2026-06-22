@@ -131,8 +131,7 @@ async def start_loop(
         raise gr.Error("Select a strategy.")
     if not dataset_value:
         raise gr.Error(
-            "Select a dataset. Open the Data screen and run Backfill if the "
-            "dropdown is empty."
+            "Select a dataset. Open the Data screen and run Backfill if the dropdown is empty."
         )
     try:
         symbol, dataset_timeframe = Dataset.parse(dataset_value)
@@ -649,9 +648,9 @@ def render() -> None:
     stop_btn.click(fn=stop_loop, inputs=[], outputs=[activity_output, status_output])
 
     if creds_present:
-        test_btn.click(
-            fn=test_connection, inputs=[dataset_input], outputs=[diag_output]
-        ).then(fn=lambda: gr.update(visible=True), outputs=[diag_output])
+        test_btn.click(fn=test_connection, inputs=[dataset_input], outputs=[diag_output]).then(
+            fn=lambda: gr.update(visible=True), outputs=[diag_output]
+        )
         preflight_btn.click(
             fn=preflight_order, inputs=[dataset_input, balance_input], outputs=[diag_output]
         ).then(fn=lambda: gr.update(visible=True), outputs=[diag_output])

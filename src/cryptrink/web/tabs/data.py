@@ -805,19 +805,13 @@ def render() -> None:
                     "gated behind a browser confirm dialog."
                 )
                 with gr.Row():
-                    count_btn = gr.Button(
-                        "Count selected pair", elem_classes=["ck-btn-secondary"]
-                    )
-                    overview_btn = gr.Button(
-                        "Database overview", elem_classes=["ck-btn-secondary"]
-                    )
+                    count_btn = gr.Button("Count selected pair", elem_classes=["ck-btn-secondary"])
+                    overview_btn = gr.Button("Database overview", elem_classes=["ck-btn-secondary"])
                     refresh_symbols_btn = gr.Button(
                         "Refresh symbols", elem_classes=["ck-btn-secondary"]
                     )
                 with gr.Row():
-                    diagnostics_btn = gr.Button(
-                        "DB diagnostics", elem_classes=["ck-btn-secondary"]
-                    )
+                    diagnostics_btn = gr.Button("DB diagnostics", elem_classes=["ck-btn-secondary"])
                     checkpoint_btn = gr.Button(
                         "Force checkpoint", elem_classes=["ck-btn-secondary"]
                     )

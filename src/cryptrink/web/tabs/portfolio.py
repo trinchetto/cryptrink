@@ -270,18 +270,14 @@ def _metrics_html(result: PortfolioBacktestResult) -> str:
             _metric_card(
                 "Max drawdown", f"{float(m.max_drawdown) * 100:.1f}%", "peak to trough", "neg"
             ),
-            _metric_card(
-                "Win rate", f"{float(m.win_rate) * 100:.1f}%", f"{m.total_trades} trades"
-            ),
+            _metric_card("Win rate", f"{float(m.win_rate) * 100:.1f}%", f"{m.total_trades} trades"),
         ]
     )
     return f'<div class="ck-metrics">{cards}</div>'
 
 
 def _empty_breakdown_df() -> pd.DataFrame:
-    return pd.DataFrame(
-        columns=["symbol", "strategy", "trades", "win_rate_pct", "realized_pnl"]
-    )
+    return pd.DataFrame(columns=["symbol", "strategy", "trades", "win_rate_pct", "realized_pnl"])
 
 
 def _breakdown_dataframe(result: PortfolioBacktestResult) -> pd.DataFrame:
@@ -391,14 +387,16 @@ def render() -> None:
                 trades_output = gr.Dataframe(value=_empty_trades_df())
 
     # ---- wiring ----
-    refresh_btn.click(fn=refresh_portfolios, inputs=[portfolio_dropdown], outputs=[portfolio_dropdown])
-    portfolio_dropdown.change(
-        fn=load_portfolio_yaml, inputs=[portfolio_dropdown], outputs=[editor]
+    refresh_btn.click(
+        fn=refresh_portfolios, inputs=[portfolio_dropdown], outputs=[portfolio_dropdown]
     )
+    portfolio_dropdown.change(fn=load_portfolio_yaml, inputs=[portfolio_dropdown], outputs=[editor])
     new_btn.click(fn=new_portfolio_yaml, inputs=[], outputs=[editor])
     save_btn.click(fn=save_portfolio_yaml, inputs=[editor], outputs=[portfolio_dropdown])
     delete_btn.click(
-        fn=delete_portfolio_handler, inputs=[portfolio_dropdown], outputs=[portfolio_dropdown, editor]
+        fn=delete_portfolio_handler,
+        inputs=[portfolio_dropdown],
+        outputs=[portfolio_dropdown, editor],
     )
     run_btn.click(
         fn=run_portfolio_backtest,

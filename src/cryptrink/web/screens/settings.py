@@ -70,17 +70,13 @@ def _kv(label: str, value: str, tone: str = "") -> str:
 def _connection_html(settings: Settings) -> str:
     rows = "".join(_kv(label, value, tone) for label, value, tone in connection_rows(settings))
     return (
-        '<div class="ck-card"><div class="ck-section-label">Revolut X connection</div>'
-        f"{rows}</div>"
+        f'<div class="ck-card"><div class="ck-section-label">Revolut X connection</div>{rows}</div>'
     )
 
 
 def _risk_html(settings: Settings) -> str:
     rows = "".join(_kv(label, value) for label, value in risk_rows(settings))
-    return (
-        '<div class="ck-card"><div class="ck-section-label">Risk defaults</div>'
-        f"{rows}</div>"
-    )
+    return f'<div class="ck-card"><div class="ck-section-label">Risk defaults</div>{rows}</div>'
 
 
 _THEME_SWATCHES = (
