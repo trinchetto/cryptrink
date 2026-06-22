@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import gradio as gr
+import pandas as pd
 from sqlalchemy import delete, func, select
 
 from cryptrink.cli.utils import init_db_schema
@@ -40,6 +41,8 @@ from cryptrink.web.state import (
     flush_runtime,
     get_runtime,
     get_symbol_choices,
+    list_datasets_sync,
+    log_event,
     set_cached_symbols,
 )
 
@@ -102,6 +105,9 @@ def _emit(message: str) -> str:
     _LOG.append(f"[{_now()}] {message}")
     if len(_LOG) > _LOG_MAX_LINES:
         del _LOG[: len(_LOG) - _LOG_MAX_LINES]
+    # Mirror into the shared docked terminal so the global log carries every
+    # Data tab action alongside the per-tab buffer the handlers still return.
+    log_event("data", "info", message)
     return _render_terminal()
 
 
@@ -719,6 +725,29 @@ async def refresh_symbols(current: str) -> tuple[object, str]:
     return gr.update(choices=symbols, value=new_value), log
 
 
+def _stored_datasets_df() -> pd.DataFrame:
+    """Snapshot the OHLCV table as a ``(symbol, timeframe)`` summary frame.
+
+    Read synchronously via :func:`list_datasets_sync` so the Stored-datasets
+    table lands populated on first render without a manual refresh button.
+    """
+    columns = ["Symbol", "Timeframe", "Candles", "Earliest", "Latest"]
+    datasets = list_datasets_sync()
+    if not datasets:
+        return pd.DataFrame(columns=columns)
+    rows = [
+        {
+            "Symbol": ds.symbol,
+            "Timeframe": ds.timeframe,
+            "Candles": ds.candle_count,
+            "Earliest": ds.earliest.date().isoformat(),
+            "Latest": ds.latest.date().isoformat(),
+        }
+        for ds in datasets
+    ]
+    return pd.DataFrame(rows, columns=columns)
+
+
 def render() -> None:
     """Render the Data tab UI with a single shared terminal output."""
     runtime = get_runtime()
@@ -735,20 +764,13 @@ def render() -> None:
     if not _LOG:
         _emit(f"boot: {_format_db_size(runtime.settings.database.url)}")
 
-    with gr.Column():
-        gr.Markdown(
-            "Manage the historical OHLCV table the Backtest, Suggest, and Live "
-            "tabs read from. Every action is logged to the terminal at the "
-            "bottom of the tab — there are no other status panes.\n\n"
-            "**Note on retention.** Revolut X's `/candles` endpoint keeps "
-            "short timeframes (1m, 5m, 15m) for only a limited window — "
-            "expect 1m to cover the most recent ~28 days. For longer history, "
-            "use a coarser timeframe (1h, 4h, 1d). The backfill log makes "
-            "the data horizon explicit when it stops short of your requested "
-            "start.\n\n" + cred_hint
-        )
-
-        with gr.Row():
+    with gr.Row(elem_classes=["ck-screen-cols"]):
+        # ---- left: backfill configuration ----
+        with (
+            gr.Column(scale=0, elem_classes=["ck-col-300"]),
+            gr.Group(elem_classes=["ck-card"]),
+        ):
+            gr.HTML('<div class="ck-section-label">Backfill</div>')
             symbol_input = gr.Dropdown(
                 choices=get_symbol_choices(),
                 value=default_symbol(),
@@ -760,54 +782,90 @@ def render() -> None:
                 value="1h",
                 label="Timeframe",
             )
-
-        with gr.Row():
             start_input = gr.Textbox(value="2024-01-01", label="Start (YYYY-MM-DD)")
             end_input = gr.Textbox(value="", label="End (YYYY-MM-DD, blank = now)")
+            backfill_btn = gr.Button("Backfill", elem_classes=["ck-btn-primary"])
+            gr.Markdown(cred_hint)
 
-        with gr.Row():
-            backfill_btn = gr.Button("Backfill", variant="primary")
-            count_btn = gr.Button("Count selected pair")
-            overview_btn = gr.Button("Database overview")
-            refresh_symbols_btn = gr.Button("Refresh symbols", variant="secondary")
+        # ---- right: stored datasets + maintenance ----
+        with gr.Column(elem_classes=["ck-col-main"]):
+            with gr.Group(elem_classes=["ck-card"]):
+                gr.HTML('<div class="ck-card-title">Stored datasets</div>')
+                gr.Markdown(
+                    "Auto-synced on startup. Revolut X's `/candles` endpoint keeps "
+                    "short timeframes (1m, 5m, 15m) for only a limited window — "
+                    "expect 1m to cover the most recent ~28 days. For longer "
+                    "history, use a coarser timeframe (1h, 4h, 1d)."
+                )
+                datasets_df = gr.Dataframe(value=_stored_datasets_df())
 
-        with gr.Row():
-            diagnostics_btn = gr.Button("DB diagnostics")
-            checkpoint_btn = gr.Button("Force checkpoint")
-            wipe_btn = gr.Button("Wipe (with confirm)", variant="stop")
-            reset_btn = gr.Button("Reset database (corruption recovery)", variant="stop")
-            clear_btn = gr.Button("Clear log")
+            with gr.Accordion("Advanced", open=False):
+                gr.Markdown(
+                    "Maintenance operations. Wipe and Reset are destructive and "
+                    "gated behind a browser confirm dialog."
+                )
+                with gr.Row():
+                    count_btn = gr.Button(
+                        "Count selected pair", elem_classes=["ck-btn-secondary"]
+                    )
+                    overview_btn = gr.Button(
+                        "Database overview", elem_classes=["ck-btn-secondary"]
+                    )
+                    refresh_symbols_btn = gr.Button(
+                        "Refresh symbols", elem_classes=["ck-btn-secondary"]
+                    )
+                with gr.Row():
+                    diagnostics_btn = gr.Button(
+                        "DB diagnostics", elem_classes=["ck-btn-secondary"]
+                    )
+                    checkpoint_btn = gr.Button(
+                        "Force checkpoint", elem_classes=["ck-btn-secondary"]
+                    )
+                    clear_btn = gr.Button("Clear log", elem_classes=["ck-btn-secondary"])
+                with gr.Row():
+                    wipe_btn = gr.Button("Wipe (with confirm)", elem_classes=["ck-btn-stop"])
+                    reset_btn = gr.Button(
+                        "Reset database (corruption recovery)", elem_classes=["ck-btn-stop"]
+                    )
 
-        terminal = gr.Markdown(value=_render_terminal(), label="Terminal")
+    # ``backfill`` and the maintenance handlers still return the rendered
+    # per-tab terminal markdown; route it into a hidden component so they
+    # have a sink while the visible log lives in the shared docked terminal.
+    terminal = gr.Markdown(value=_render_terminal(), visible=False)
 
-        backfill_btn.click(
-            fn=backfill,
-            inputs=[symbol_input, timeframe_input, start_input, end_input],
-            outputs=[terminal],
-        )
-        count_btn.click(
-            fn=refresh_counts,
-            inputs=[symbol_input, timeframe_input],
-            outputs=[terminal],
-        )
-        overview_btn.click(fn=database_overview, inputs=[], outputs=[terminal])
-        refresh_symbols_btn.click(
-            fn=refresh_symbols,
-            inputs=[symbol_input],
-            outputs=[symbol_input, terminal],
-        )
-        wipe_btn.click(
-            fn=wipe,
-            inputs=[symbol_input, timeframe_input],
-            outputs=[terminal],
-            js=_WIPE_CONFIRM_JS,
-        )
-        clear_btn.click(fn=clear_log, inputs=[], outputs=[terminal])
-        diagnostics_btn.click(fn=db_diagnostics, inputs=[], outputs=[terminal])
-        checkpoint_btn.click(fn=force_checkpoint, inputs=[], outputs=[terminal])
-        reset_btn.click(
-            fn=reset_database,
-            inputs=[],
-            outputs=[terminal],
-            js=_RESET_CONFIRM_JS,
-        )
+    # Backfill writes new rows — refresh the Stored-datasets table once the
+    # stream completes so the operator sees the new (symbol, timeframe) group
+    # without a manual refresh.
+    backfill_btn.click(
+        fn=backfill,
+        inputs=[symbol_input, timeframe_input, start_input, end_input],
+        outputs=[terminal],
+    ).then(fn=_stored_datasets_df, inputs=[], outputs=[datasets_df])
+    count_btn.click(
+        fn=refresh_counts,
+        inputs=[symbol_input, timeframe_input],
+        outputs=[terminal],
+    )
+    overview_btn.click(fn=database_overview, inputs=[], outputs=[terminal]).then(
+        fn=_stored_datasets_df, inputs=[], outputs=[datasets_df]
+    )
+    refresh_symbols_btn.click(
+        fn=refresh_symbols,
+        inputs=[symbol_input],
+        outputs=[symbol_input, terminal],
+    )
+    wipe_btn.click(
+        fn=wipe,
+        inputs=[symbol_input, timeframe_input],
+        outputs=[terminal],
+        js=_WIPE_CONFIRM_JS,
+    ).then(fn=_stored_datasets_df, inputs=[], outputs=[datasets_df])
+    clear_btn.click(fn=clear_log, inputs=[], outputs=[terminal])
+    diagnostics_btn.click(fn=db_diagnostics, inputs=[], outputs=[terminal])
+    checkpoint_btn.click(fn=force_checkpoint, inputs=[], outputs=[terminal])
+    reset_btn.click(
+        fn=reset_database,
+        inputs=[],
+        outputs=[terminal],
+        js=_RESET_CONFIRM_JS,
+    ).then(fn=_stored_datasets_df, inputs=[], outputs=[datasets_df])
