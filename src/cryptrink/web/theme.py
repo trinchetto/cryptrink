@@ -144,7 +144,11 @@ footer { display: none !important; }
 .ck-banner-btn button, button.ck-banner-btn { border-radius: 7px !important; padding: 6px 12px !important; }
 
 /* ---- body grid ---- */
-.ck-body { display: grid; grid-template-columns: 212px 1fr 296px; min-height: 0; }
+/* !important + min-width:0 override Gradio's .row flex + per-column min-width so the
+   three tracks (sidebar | main | rail) size to the grid, not to content. */
+.ck-body { display: grid !important; grid-template-columns: 212px 1fr 296px !important;
+  min-height: 0; gap: 0 !important; }
+.ck-body > * { min-width: 0 !important; }
 .ck-sidebar { border-right: 1px solid var(--border); background: var(--surface);
   padding: 14px 10px; display: flex; flex-direction: column; gap: 4px; }
 .ck-nav-group-label { font-size: 9.5px; font-weight: 600; letter-spacing: 1.2px;
@@ -166,8 +170,10 @@ footer { display: none !important; }
 .ck-screen-synced { font-size: 11px; color: var(--faint); display: inline-flex;
   align-items: center; gap: 7px; }
 .ck-screen-body { padding: 22px 26px 40px; animation: ck-fadein 0.25s; }
-.ck-col-300 { max-width: 300px; }
-.ck-col-320 { max-width: 320px; }
+.ck-col-300 { max-width: 320px; display: flex; flex-direction: column; gap: 14px; }
+.ck-col-320 { max-width: 340px; display: flex; flex-direction: column; gap: 14px; }
+.ck-col-main { display: flex; flex-direction: column; gap: 16px; min-width: 0; flex: 1; }
+.ck-screen-cols { gap: 20px !important; align-items: flex-start; }
 
 /* ---- cards & metrics ---- */
 .ck-card { background: var(--surface); border: 1px solid var(--border); border-radius: 11px;
