@@ -17,6 +17,8 @@ import gradio as gr
 
 from cryptrink.web import state as web_state
 from cryptrink.web import theme
+from cryptrink.web.live_loop import get_active_loop
+from cryptrink.web.live_setup import has_revolutx_credentials
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -256,17 +258,6 @@ def rail_html(
     )
 
 
-def _empty_rail_html() -> str:
-    """Rail content before the first sync (all placeholders)."""
-    return rail_html(
-        running=False,
-        loop_sub="No active loop",
-        today_rows=[("Unrealised P&L", "—", ""), ("Open positions", "—", "")],
-        positions=[("—", "", "")],
-        watchlist=[("—", "", "")],
-    )
-
-
 # ---------------------------------------------------------------------------
 # Gradio assembly
 # ---------------------------------------------------------------------------
@@ -281,7 +272,62 @@ def _chip_classes(active: bool) -> list[str]:
     return ["ck-chip", "ck-chip-active"] if active else ["ck-chip"]
 
 
-def build_workspace(screen_builders: dict[str, Callable[[], None]]) -> None:
+def _header_now() -> str:
+    """Current header HTML from runtime state (connection + last-synced stamp)."""
+    runtime = web_state.get_runtime()
+    connected = has_revolutx_credentials(runtime.settings)
+    return header_html("—", web_state.get_last_synced("datasets"), connected=connected)
+
+
+def _rail_now() -> str:
+    """Current status-rail HTML (live-loop state + mode)."""
+    loop = get_active_loop()
+    running = bool(loop is not None and loop.is_running)
+    mode = web_state.get_mode()
+    if running and loop is not None:
+        snap = loop.snapshot()
+        loop_sub = f"{mode} · {snap.symbol} · {snap.interval_seconds:.0f}s"
+    else:
+        loop_sub = "No active loop"
+    return rail_html(
+        running=running,
+        loop_sub=loop_sub,
+        today_rows=[("Mode", mode.upper(), ""), ("Unrealised P&L", "—", "")],
+        positions=[("—", "", "")],
+        watchlist=[("—", "", "")],
+    )
+
+
+async def startup_sync() -> tuple[str, str]:
+    """Auto-sync on app load: probe connection, symbols, datasets; log each + stamp.
+
+    Returns updated (header_html, rail_html). The docked terminal renders the logged
+    lines on its own timer.
+    """
+    runtime = web_state.get_runtime()
+    if has_revolutx_credentials(runtime.settings):
+        web_state.log_event("sys", "ok", "revolutx: credentials present")
+    else:
+        web_state.log_event("sys", "info", "paper sandbox — no live exchange connection")
+    web_state.mark_synced("connection")
+
+    symbols = web_state.get_symbol_choices()
+    web_state.log_event("sys", "info", f"symbol vocabulary: {len(symbols)} symbols")
+    web_state.mark_synced("symbols")
+
+    try:
+        datasets = await web_state.list_datasets()
+        web_state.log_event(
+            "data", "ok", f"auto-sync: {len(datasets)} (symbol, timeframe) datasets loaded"
+        )
+    except Exception as exc:  # best-effort startup sync
+        web_state.log_event("data", "warn", f"dataset sync failed: {exc}")
+    web_state.mark_synced("datasets")
+
+    return _header_now(), _rail_now()
+
+
+def build_workspace(demo: gr.Blocks, screen_builders: dict[str, Callable[[], None]]) -> None:
     """Build the whole workspace inside an open ``gr.Blocks`` context.
 
     ``screen_builders`` maps a screen key (see :data:`SCREEN_ORDER`) to the function
@@ -295,7 +341,7 @@ def build_workspace(screen_builders: dict[str, Callable[[], None]]) -> None:
     with gr.Column(elem_id="ck-root", elem_classes=["ck-theme-carbon"]):
         # ---- header ----
         with gr.Row(elem_classes=["ck-header"]):
-            gr.HTML(header_html("€0.00", None, connected=False), elem_id="ck-header-left")
+            header_left = gr.HTML(_header_now(), elem_id="ck-header-left")
             theme_btns = {
                 name: gr.Button(glyph, elem_classes=["ck-theme-btn"], scale=0)
                 for name, glyph in (("carbon", "◐"), ("slate", "◑"), ("daylight", "☀"))
@@ -336,7 +382,7 @@ def build_workspace(screen_builders: dict[str, Callable[[], None]]) -> None:
                         screen_builders[key]()
                     panels[key] = panel
             with gr.Column(elem_classes=["ck-rail"], scale=0):
-                gr.HTML(_empty_rail_html(), elem_id="ck-rail")
+                rail = gr.HTML(_rail_now(), elem_id="ck-rail")
 
         # ---- docked terminal ----
         with gr.Column(elem_classes=["ck-term"]):
@@ -459,3 +505,10 @@ def build_workspace(screen_builders: dict[str, Callable[[], None]]) -> None:
         return terminal_html([])
 
     clear_btn.click(fn=_clear, inputs=None, outputs=[term_body])
+
+    # ---- wiring: automation (startup sync + live chrome refresh) ----
+    demo.load(fn=startup_sync, inputs=None, outputs=[header_left, rail])
+    chrome_timer = gr.Timer(4.0)
+    chrome_timer.tick(
+        fn=lambda: (_header_now(), _rail_now()), inputs=None, outputs=[header_left, rail]
+    )

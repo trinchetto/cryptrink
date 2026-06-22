@@ -71,6 +71,7 @@ def build_demo() -> gr.Blocks:
             elem_id="ck-style-inject",
         )
         shell.build_workspace(
+            demo,
             {
                 "backtest": backtest.render,
                 "portfolio": portfolio.render,
