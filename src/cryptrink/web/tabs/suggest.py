@@ -161,7 +161,7 @@ def render() -> None:
         if runtime.settings.default_strategy in strategy_options
         else (strategy_options[0] if strategy_options else None)
     )
-    with gr.Tab("Suggest"):
+    with gr.Column():
         gr.Markdown(
             "Generate a one-shot trade suggestion from the latest stored candle. "
             "No order is placed. The Dataset dropdown lists what is actually in "

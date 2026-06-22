@@ -529,7 +529,7 @@ def render() -> None:
         )
         cred_hint = "_No Revolut X credentials in env; Live mode is hidden until they are set._"
 
-    with gr.Tab("Live"):
+    with gr.Column():
         gr.Markdown(
             "Run a strategy on a periodic interval. Each tick fetches the latest "
             "candle, generates a signal, and routes it through risk validation and "

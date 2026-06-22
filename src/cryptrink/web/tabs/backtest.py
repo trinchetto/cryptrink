@@ -705,7 +705,7 @@ def render() -> None:
         else (strategy_options[0] if strategy_options else None)
     )
 
-    with gr.Tab("Backtest"):
+    with gr.Column():
         gr.Markdown(
             "Replay a strategy over a stored OHLCV ``(symbol, timeframe)`` group. "
             "The Dataset dropdown lists what is actually persisted in the database "

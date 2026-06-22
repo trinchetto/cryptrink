@@ -85,6 +85,7 @@ _FONTS_HEAD = (
 # is neutralised inside #ck-root so the custom grid shows through.
 _BASE_CSS = """
 /* ---- gradio container reset ---- */
+#ck-style-inject { display: none !important; }
 gradio-app { background: var(--bg); }
 .gradio-container { max-width: 100% !important; padding: 0 !important; margin: 0 !important; }
 footer { display: none !important; }
@@ -307,6 +308,11 @@ def boot_js() -> str:
     """
     return (
         "() => {"
+        # Force Gradio's own components into dark mode so native inputs/markdown/code
+        # match the Carbon surface instead of the default light theme.
+        " document.body.classList.add('dark');"
+        " const app = document.querySelector('gradio-app');"
+        " if (app) app.classList.add('dark');"
         " const r = document.getElementById('ck-root');"
         " try { const t = localStorage.getItem('ck-theme');"
         " if (r && t) { ['carbon','slate','daylight'].forEach(x => r.classList.remove('ck-theme-' + x));"

@@ -13,7 +13,14 @@ import html as _html
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import gradio as gr
+
+from cryptrink.web import state as web_state
+from cryptrink.web import theme
+
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from cryptrink.web.state import LogEvent
 
 
@@ -171,3 +178,208 @@ def screen_header_html(screen: str, synced: str | None) -> str:
         '<div style="flex:1"></div>'
         f"{synced_html}</div>"
     )
+
+
+def header_html(balance: str, synced: str | None, connected: bool) -> str:
+    """Render the persistent header (logo, exchange pill, balance, synced stamp)."""
+    conn_dot = "ck-dot-pos" if connected else "ck-dot-faint"
+    conn_label = "connected" if connected else "offline"
+    conn_color = "var(--pos)" if connected else "var(--faint)"
+    synced_txt = _esc(synced) if synced else "—"
+    return (
+        '<div class="ck-header-left" style="display:flex;align-items:center;gap:18px;flex:1">'
+        '<div style="display:flex;align-items:center;gap:9px">'
+        '<span class="ck-logo-sq">c</span>'
+        '<span class="ck-wordmark">cryptrink</span>'
+        '<span class="ck-pill">Revolut X</span></div>'
+        f'<div class="ck-conn-chip"><span class="ck-dot {conn_dot}"></span>'
+        f'<span style="color:var(--dim)">Exchange</span>'
+        f'<span style="color:{conn_color};font-weight:600">{conn_label}</span></div>'
+        '<div style="flex:1"></div>'
+        '<div style="text-align:right;line-height:1.25">'
+        '<div class="ck-balance-l">Account balance</div>'
+        f'<div class="ck-balance-v">{_esc(balance)}</div></div>'
+        '<div class="ck-synced"><span class="ck-balance-l">Synced</span>'
+        '<span class="ck-dot ck-dot-pos" style="animation:ck-blink 2s infinite"></span>'
+        f'<span class="ck-mono">{synced_txt}</span></div>'
+    )
+
+
+def _rail_section(label: str, body: str) -> str:
+    return f'<div><div class="ck-rail-label">{_esc(label)}</div>{body}</div>'
+
+
+def rail_html(
+    *,
+    running: bool,
+    loop_sub: str,
+    today_rows: list[tuple[str, str, str]],
+    positions: list[tuple[str, str, str]],
+    watchlist: list[tuple[str, str, str]],
+) -> str:
+    """Render the right status rail (live loop, today's P&L, positions, watchlist).
+
+    ``today_rows``/``positions``/``watchlist`` are ``(label, value, css_class)`` rows;
+    ``css_class`` is ``""`` | ``"ck-pos"`` | ``"ck-neg"`` to colour the value.
+    """
+    state_word = "Running" if running else "Idle"
+    dot = "ck-dot-pos" if running else "ck-dot-faint"
+    card_cls = "ck-rail-card ck-running" if running else "ck-rail-card"
+    loop = (
+        f'<div class="{card_cls}"><div style="display:flex;align-items:center;gap:8px">'
+        f'<span class="ck-dot {dot}"></span><b>{state_word}</b></div>'
+        f'<div style="color:var(--faint);font-size:11px;margin-top:4px">{_esc(loop_sub)}</div></div>'
+    )
+
+    def _rows(rows: list[tuple[str, str, str]]) -> str:
+        return "".join(
+            f'<div class="ck-rail-row"><span style="color:var(--faint)">{_esc(k)}</span>'
+            f'<span class="ck-mono {cls}">{_esc(v)}</span></div>'
+            for k, v, cls in rows
+        )
+
+    return (
+        _rail_section("Live loop", loop)
+        + _rail_section("Today", _rows(today_rows))
+        + _rail_section("Positions", _rows(positions))
+        + _rail_section("Watchlist", _rows(watchlist))
+    )
+
+
+def _empty_rail_html() -> str:
+    """Rail content before the first sync (all placeholders)."""
+    return rail_html(
+        running=False,
+        loop_sub="No active loop",
+        today_rows=[("Unrealised P&L", "—", ""), ("Open positions", "—", "")],
+        positions=[("—", "", "")],
+        watchlist=[("—", "", "")],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Gradio assembly
+# ---------------------------------------------------------------------------
+TERM_FILTERS = ("all", "sys", "data", "backtest", "live")
+
+
+def _nav_classes(active: bool) -> list[str]:
+    return ["ck-nav-item", "ck-nav-active"] if active else ["ck-nav-item"]
+
+
+def _chip_classes(active: bool) -> list[str]:
+    return ["ck-chip", "ck-chip-active"] if active else ["ck-chip"]
+
+
+def build_workspace(screen_builders: dict[str, Callable[[], None]]) -> None:
+    """Build the whole workspace inside an open ``gr.Blocks`` context.
+
+    ``screen_builders`` maps a screen key (see :data:`SCREEN_ORDER`) to the function
+    that renders that screen's panel. The shell mounts each inside a visibility-toggled
+    group, wires the sidebar navigation, theme switch, and docked global terminal.
+    """
+    mode = web_state.get_mode()
+    screen_state = gr.State(DEFAULT_SCREEN)
+    term_filter = gr.State("all")
+
+    with gr.Column(elem_id="ck-root", elem_classes=["ck-theme-carbon"]):
+        # ---- header ----
+        with gr.Row(elem_classes=["ck-header"]):
+            gr.HTML(header_html("€0.00", None, connected=False), elem_id="ck-header-left")
+            theme_btns = {
+                name: gr.Button(glyph, elem_classes=["ck-theme-btn"], scale=0)
+                for name, glyph in (("carbon", "◐"), ("slate", "◑"), ("daylight", "☀"))
+            }
+        for name, btn in theme_btns.items():
+            btn.click(fn=None, js=theme.theme_switch_js(name))
+
+        # ---- mode banner ----
+        gr.HTML(banner_html(mode), elem_id="ck-banner")
+
+        # ---- body: sidebar | main | rail ----
+        nav_buttons: dict[str, gr.Button] = {}
+        panels: dict[str, gr.Group] = {}
+        with gr.Row(elem_classes=["ck-body"]):
+            with gr.Column(elem_classes=["ck-sidebar"], scale=0):
+                for group in NAV_GROUPS:
+                    gr.HTML(f'<div class="ck-nav-group-label">{group.label}</div>')
+                    for item in group.items:
+                        nav_buttons[item.key] = gr.Button(
+                            item.label,
+                            elem_id=f"ck-nav-{item.key}",
+                            elem_classes=_nav_classes(item.key == DEFAULT_SCREEN),
+                        )
+            with gr.Column(elem_classes=["ck-main"]):
+                screen_header = gr.HTML(
+                    screen_header_html(DEFAULT_SCREEN, None), elem_id="ck-screen-header"
+                )
+                for key in SCREEN_ORDER:
+                    with gr.Group(
+                        visible=(key == DEFAULT_SCREEN), elem_classes=["ck-screen-body"]
+                    ) as panel:
+                        screen_builders[key]()
+                    panels[key] = panel
+            with gr.Column(elem_classes=["ck-rail"], scale=0):
+                gr.HTML(_empty_rail_html(), elem_id="ck-rail")
+
+        # ---- docked terminal ----
+        with gr.Column(elem_classes=["ck-term"]):
+            with gr.Row(elem_classes=["ck-term-head"]):
+                gr.HTML(
+                    '<span class="ck-term-title">Terminal</span>'
+                    '<span class="ck-dot ck-dot-pos" style="animation:ck-blink 1.4s infinite"></span>'
+                    '<span class="ck-term-meta">streaming</span>'
+                )
+                chip_btns = {
+                    name: gr.Button(name, elem_classes=_chip_classes(name == "all"), scale=0)
+                    for name in TERM_FILTERS
+                }
+                clear_btn = gr.Button("clear", elem_classes=["ck-chip"], scale=0)
+            term_body = gr.HTML(
+                terminal_html(web_state.get_log_events("all")), elem_classes=["ck-term-shell"]
+            )
+            term_timer = gr.Timer(1.0)
+
+    # ---- wiring: screen switching ----
+    switch_outputs = (
+        [panels[s] for s in SCREEN_ORDER]
+        + [screen_header]
+        + [nav_buttons[s] for s in SCREEN_ORDER]
+        + [screen_state]
+    )
+
+    def _make_select(target: str) -> Callable[[], list[object]]:
+        def _select() -> list[object]:
+            panel_updates = [gr.update(visible=(s == target)) for s in SCREEN_ORDER]
+            nav_updates = [gr.update(elem_classes=_nav_classes(s == target)) for s in SCREEN_ORDER]
+            header = screen_header_html(target, web_state.get_last_synced(target))
+            return [*panel_updates, header, *nav_updates, target]
+
+        return _select
+
+    for key, btn in nav_buttons.items():
+        btn.click(fn=_make_select(key), inputs=None, outputs=switch_outputs)
+
+    # ---- wiring: terminal ----
+    def _render_term(active_filter: str) -> str:
+        return terminal_html(web_state.get_log_events(active_filter))
+
+    term_timer.tick(fn=_render_term, inputs=[term_filter], outputs=[term_body])
+
+    chip_outputs = [term_body, term_filter, *chip_btns.values()]
+
+    def _make_filter(selected: str) -> Callable[[], list[object]]:
+        def _set() -> list[object]:
+            chip_updates = [gr.update(elem_classes=_chip_classes(n == selected)) for n in TERM_FILTERS]
+            return [terminal_html(web_state.get_log_events(selected)), selected, *chip_updates]
+
+        return _set
+
+    for name, chip in chip_btns.items():
+        chip.click(fn=_make_filter(name), inputs=None, outputs=chip_outputs)
+
+    def _clear() -> str:
+        web_state.clear_log_events()
+        return terminal_html([])
+
+    clear_btn.click(fn=_clear, inputs=None, outputs=[term_body])

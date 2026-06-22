@@ -735,7 +735,7 @@ def render() -> None:
     if not _LOG:
         _emit(f"boot: {_format_db_size(runtime.settings.database.url)}")
 
-    with gr.Tab("Data"):
+    with gr.Column():
         gr.Markdown(
             "Manage the historical OHLCV table the Backtest, Suggest, and Live "
             "tabs read from. Every action is logged to the terminal at the "

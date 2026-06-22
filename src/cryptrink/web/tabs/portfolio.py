@@ -508,7 +508,7 @@ def render() -> None:
     else:
         initial_yaml = dump_yaml(example_portfolio())
 
-    with gr.Tab("Portfolio"):
+    with gr.Column():
         gr.Markdown(_INTRO)
 
         with gr.Row():
