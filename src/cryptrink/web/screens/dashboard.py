@@ -1,14 +1,123 @@
-"""Dashboard screen — at-a-glance engine state, positions, and orders.
+"""Dashboard screen — at-a-glance engine state, open positions, and orders.
 
-Stub: the workspace shell mounts ``render()``; the real metrics + tables land in the
-dashboard task. Reuses ``web.tabs.status`` data builders rather than new engine code.
+A read-only aggregation of data the Status tab already surfaced: it reuses
+``web.tabs.status.refresh`` (engines / orders / positions DataFrames) and derives a
+4-up metrics row. No new engine logic. Auto-refreshes on a timer.
 """
 
 from __future__ import annotations
 
+import html
+from typing import TYPE_CHECKING
+
 import gradio as gr
+
+from cryptrink.web.tabs import status
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+
+def _metric_card(label: str, value: str, sub: str, tone: str = "") -> str:
+    tone_cls = {"pos": " ck-pos", "neg": " ck-neg"}.get(tone, "")
+    return (
+        '<div class="ck-metric">'
+        f'<div class="ck-metric-label">{html.escape(label)}</div>'
+        f'<div class="ck-metric-value{tone_cls}">{html.escape(value)}</div>'
+        f'<div class="ck-metric-sub">{html.escape(sub)}</div></div>'
+    )
+
+
+def metrics_html(
+    account_equity: str,
+    open_pnl: str,
+    realised: str,
+    active_engines: str,
+    *,
+    open_positions_sub: str = "",
+    realised_sub: str = "",
+    engines_sub: str = "",
+) -> str:
+    """Render the 4-up dashboard metrics row from pre-formatted values."""
+    cards = "".join(
+        [
+            _metric_card("Account equity", account_equity, "across engines"),
+            _metric_card("Open P&L", open_pnl, open_positions_sub),
+            _metric_card("Realised", realised, realised_sub),
+            _metric_card("Active engines", active_engines, engines_sub),
+        ]
+    )
+    return f'<div class="ck-metrics">{cards}</div>'
+
+
+def _euro(value: float, signed: bool = False) -> str:
+    sign = "+" if (signed and value >= 0) else ("-" if (signed and value < 0) else "")
+    return f"{sign}€{abs(value):,.2f}"
+
+
+def derive_metrics(engines: pd.DataFrame, positions: pd.DataFrame) -> dict[str, str]:
+    """Derive the dashboard metric values from the status DataFrames."""
+    running = int(engines["running"].sum()) if "running" in engines and len(engines) else 0
+    total_engines = len(engines)
+    if "current_balance" in engines and len(engines):
+        account_equity = _euro(float(engines["current_balance"].sum()))
+    else:
+        account_equity = "—"
+
+    open_mask = positions["status"] == "open" if "status" in positions and len(positions) else None
+    open_count = int(open_mask.sum()) if open_mask is not None else 0
+    open_pnl_val = (
+        float(positions.loc[open_mask, "realized_pnl"].sum())
+        if open_mask is not None and "realized_pnl" in positions
+        else 0.0
+    )
+    closed_mask = (
+        positions["status"] == "closed" if "status" in positions and len(positions) else None
+    )
+    realised_val = (
+        float(positions.loc[closed_mask, "realized_pnl"].sum())
+        if closed_mask is not None and "realized_pnl" in positions
+        else 0.0
+    )
+    closed_count = int(closed_mask.sum()) if closed_mask is not None else 0
+
+    return {
+        "account_equity": account_equity,
+        "open_pnl": _euro(open_pnl_val, signed=True),
+        "realised": _euro(realised_val, signed=True),
+        "active_engines": str(running),
+        "open_positions_sub": f"{open_count} open",
+        "realised_sub": f"{closed_count} recent trades",
+        "engines_sub": f"of {total_engines}",
+    }
+
+
+async def refresh() -> tuple[str, pd.DataFrame, pd.DataFrame]:
+    """Fetch state and return (metrics_html, open_positions_df, recent_orders_df)."""
+    engines, orders, positions = await status.refresh()
+    m = derive_metrics(engines, positions)
+    html_block = metrics_html(
+        m["account_equity"],
+        m["open_pnl"],
+        m["realised"],
+        m["active_engines"],
+        open_positions_sub=m["open_positions_sub"],
+        realised_sub=m["realised_sub"],
+        engines_sub=m["engines_sub"],
+    )
+    return html_block, positions, orders
 
 
 def render() -> None:
-    """Build the Dashboard screen panel (placeholder)."""
-    gr.Markdown("Dashboard — coming up.")
+    """Render the Dashboard screen panel inside the workspace shell."""
+    metrics_output = gr.HTML(metrics_html("—", "—", "—", "—"))
+    with gr.Group(elem_classes=["ck-card"]):
+        gr.HTML('<div class="ck-card-title">Open positions</div>')
+        positions_output = gr.Dataframe()
+    with gr.Group(elem_classes=["ck-card"]):
+        gr.HTML('<div class="ck-card-title">Recent orders</div>')
+        orders_output = gr.Dataframe()
+
+    outputs = [metrics_output, positions_output, orders_output]
+    timer = gr.Timer(5.0)
+    timer.tick(fn=refresh, inputs=None, outputs=outputs)
