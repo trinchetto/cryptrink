@@ -162,6 +162,16 @@ def banner_html(mode: str) -> str:
     )
 
 
+def modal_body_html(title: str, body: str) -> str:
+    """Render the confirm-dialog inner content (warning icon + title + body)."""
+    return (
+        '<div style="display:flex;align-items:center;gap:11px;margin-bottom:13px">'
+        '<span class="ck-modal-icon">!</span>'
+        f'<span class="ck-modal-title">{_esc(title)}</span></div>'
+        f'<div class="ck-modal-body">{_esc(body)}</div>'
+    )
+
+
 def screen_header_html(screen: str, synced: str | None) -> str:
     """Render the sticky per-screen header (title + subtitle + auto-synced stamp)."""
     title, subtitle = SCREEN_META.get(screen, (screen.title(), ""))
@@ -294,7 +304,13 @@ def build_workspace(screen_builders: dict[str, Callable[[], None]]) -> None:
             btn.click(fn=None, js=theme.theme_switch_js(name))
 
         # ---- mode banner ----
-        gr.HTML(banner_html(mode), elem_id="ck-banner")
+        with gr.Row(elem_id="ck-banner-row"):
+            banner = gr.HTML(banner_html(mode), elem_id="ck-banner")
+            banner_btn = gr.Button(
+                "Switch to paper" if mode == "live" else "Go live →",
+                elem_classes=["ck-btn-secondary", "ck-banner-btn"],
+                scale=0,
+            )
 
         # ---- body: sidebar | main | rail ----
         nav_buttons: dict[str, gr.Button] = {}
@@ -339,6 +355,66 @@ def build_workspace(screen_builders: dict[str, Callable[[], None]]) -> None:
                 terminal_html(web_state.get_log_events("all")), elem_classes=["ck-term-shell"]
             )
             term_timer = gr.Timer(1.0)
+
+        # ---- confirm dialog overlay (paper -> live) ----
+        # Standard Gradio modal: a Group toggled with gr.update(visible=...). This modal
+        # is exclusively the paper -> live confirm, so Confirm always means "go live".
+        with (
+            gr.Group(visible=False, elem_classes=["ck-modal"]) as modal,
+            gr.Column(elem_classes=["ck-modal-card"]),
+        ):
+            gr.HTML(
+                modal_body_html(
+                    "Switch to LIVE trading?",
+                    "Live mode places real orders on Revolut X using your account funds. "
+                    "Every Start in this session will trade real money. Make sure you have "
+                    "run a pre-flight check.",
+                )
+            )
+            with gr.Row():
+                modal_cancel = gr.Button("Cancel", elem_classes=["ck-btn-secondary"])
+                modal_confirm = gr.Button("Enable LIVE mode", elem_classes=["ck-btn-live"])
+
+    # ---- wiring: safety model (paper <-> live) ----
+    # Open via gr.update(visible=True) (renders the card); close via a js display toggle
+    # (gr.update(visible=False) does not close a shown Group). The banner js shows the
+    # dialog in paper mode and force-hides it in live mode (where the click is immediate).
+    banner_modal_js = (
+        "() => { const b = document.querySelector('button.ck-banner-btn');"
+        " const m = document.querySelector('.ck-modal'); if (!b || !m) return;"
+        " if (b.textContent.indexOf('Go live') !== -1) m.classList.remove('ck-force-hidden');"
+        " else m.classList.add('ck-force-hidden'); }"
+    )
+    hide_modal_js = (
+        "() => { const m = document.querySelector('.ck-modal');"
+        " if (m) m.classList.add('ck-force-hidden'); }"
+    )
+
+    def _on_banner_toggle() -> list[object]:
+        # paper -> live opens the confirm dialog (js reveals it); live -> paper is immediate.
+        if web_state.get_mode() == "paper":
+            return [gr.update(visible=True), gr.update(), gr.update()]
+        web_state.set_mode("paper")
+        web_state.log_event("sys", "info", "mode: switched back to PAPER")
+        return [gr.update(), banner_html("paper"), gr.update(value="Go live →")]
+
+    banner_btn.click(
+        fn=_on_banner_toggle,
+        inputs=None,
+        outputs=[modal, banner, banner_btn],
+        js=banner_modal_js,
+    )
+
+    def _on_modal_confirm() -> list[object]:
+        web_state.set_mode("live")
+        web_state.log_event("sys", "warn", "mode: switched to LIVE — real orders enabled")
+        return [banner_html("live"), gr.update(value="Switch to paper")]
+
+    modal_confirm.click(
+        fn=_on_modal_confirm, inputs=None, outputs=[banner, banner_btn], js=hide_modal_js
+    )
+
+    modal_cancel.click(fn=None, js=hide_modal_js)
 
     # ---- wiring: screen switching ----
     switch_outputs = (

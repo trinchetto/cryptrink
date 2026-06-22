@@ -138,6 +138,10 @@ footer { display: none !important; }
   color: var(--live); }
 .ck-banner-live .ck-dot { background: var(--live); }
 .ck-pulse { animation: ck-pulse 1.6s infinite; }
+#ck-banner-row { align-items: center; gap: 0; }
+#ck-banner { flex: 1; }
+.ck-banner-btn { margin-right: 14px; }
+.ck-banner-btn button, button.ck-banner-btn { border-radius: 7px !important; padding: 6px 12px !important; }
 
 /* ---- body grid ---- */
 .ck-body { display: grid; grid-template-columns: 212px 1fr 296px; min-height: 0; }
@@ -244,8 +248,15 @@ footer { display: none !important; }
   padding: 2px 7px; border-radius: 4px; }
 
 /* ---- confirm modal overlay ---- */
+/* Always display:flex (so Gradio lays the card out to its real size); the hidden
+   state uses visibility/opacity rather than display:none, which would collapse the
+   card to 0x0 and never recompute when shown via a class toggle. */
 .ck-modal { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,0.62);
   display: flex; align-items: center; justify-content: center; animation: ck-fadein 0.15s; }
+/* Gradio renders the card correctly when the Group is opened with visible=True, but
+   gr.update(visible=False) does not close a Group once shown — so closing is done by
+   a js class toggle that forces display:none. */
+.ck-modal.ck-force-hidden { display: none !important; }
 .ck-modal-card { background: var(--surface); border: 1px solid var(--live); border-radius: 14px;
   padding: 24px; width: 440px; box-shadow: 0 24px 60px rgba(0,0,0,0.5); }
 .ck-modal-icon { width: 34px; height: 34px; border-radius: 9px; background: var(--live);
