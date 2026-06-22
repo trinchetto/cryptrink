@@ -197,6 +197,15 @@ footer { display: none !important; }
 .ck-coin { width: 28px; height: 28px; border-radius: 7px; flex: none; display: inline-flex;
   align-items: center; justify-content: center; font-family: 'IBM Plex Mono', monospace;
   font-weight: 700; font-size: 9.5px; color: #fff; }
+.ck-stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.ck-stat-value { font-family: 'IBM Plex Mono', monospace; font-size: 18px; font-weight: 600;
+  margin-top: 3px; }
+.ck-kv-row { display: flex; justify-content: space-between; padding: 6px 0;
+  border-bottom: 1px solid var(--border); font-size: 12px; }
+.ck-pill-run { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; font-weight: 600;
+  padding: 2px 8px; border-radius: 5px; color: var(--pos); background: var(--accent-soft); }
+.ck-pill-idle { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; font-weight: 600;
+  padding: 2px 8px; border-radius: 5px; color: var(--faint); background: var(--surface2); }
 
 /* ---- status rail ---- */
 .ck-rail { border-left: 1px solid var(--border); background: var(--surface);
