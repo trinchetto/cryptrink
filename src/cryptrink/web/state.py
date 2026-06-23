@@ -104,8 +104,16 @@ class WebRuntime:
     settings: Settings
     session_factory: async_sessionmaker[AsyncSession]
     cached_symbols: list[str] = field(default_factory=list)
-    # --- redesign UI state (global; single-operator Space) ---
+    # --- redesign UI state ---
+    # NOTE: These are PROCESS-GLOBAL, shared across every connected browser session
+    # (the singleton is per-process, not per-user). That is intentional: this is a
+    # single-operator HF Space with one live-loop singleton and one database, so a
+    # global mode / log buffer / sync state is the correct model and matches the
+    # existing live-loop singleton. For a multi-user or horizontally-scaled
+    # deployment, ``mode`` + the log buffer would need to move to per-session
+    # ``gr.State`` so one operator's mode switch / logs don't leak to another.
     mode: str = "paper"
+    active_screen: str = "portfolio"
     log_buffer: deque[LogEvent] = field(default_factory=lambda: deque(maxlen=LOG_BUFFER_MAX))
     last_synced: dict[str, str] = field(default_factory=dict)
 
@@ -312,6 +320,17 @@ def set_mode(mode: str) -> None:
         raise ValueError(msg)
     with _lock:
         get_runtime().mode = mode
+
+
+def get_active_screen() -> str:
+    """Return the sidebar screen the operator is currently viewing."""
+    return get_runtime().active_screen
+
+
+def set_active_screen(screen: str) -> None:
+    """Record the active sidebar screen (used to gate per-screen refresh timers)."""
+    with _lock:
+        get_runtime().active_screen = screen
 
 
 def log_event(source: str, level: str, message: str) -> None:

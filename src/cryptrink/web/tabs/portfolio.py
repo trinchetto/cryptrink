@@ -11,7 +11,6 @@ Activity is pushed to the shared docked terminal via
 
 from __future__ import annotations
 
-import html
 import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -32,7 +31,7 @@ from cryptrink.portfolio.storage import (
     load_portfolio,
     save_portfolio,
 )
-from cryptrink.web import charts
+from cryptrink.web import charts, components
 from cryptrink.web.state import get_runtime, log_event
 
 if TYPE_CHECKING:
@@ -237,19 +236,9 @@ def _log_result_summary(result: PortfolioBacktestResult) -> None:
 # ----------------------------------------------------------------------
 
 
-def _metric_card(label: str, value: str, sub: str, tone: str = "") -> str:
-    tone_cls = {"pos": " ck-pos", "neg": " ck-neg"}.get(tone, "")
-    return (
-        '<div class="ck-metric">'
-        f'<div class="ck-metric-label">{html.escape(label)}</div>'
-        f'<div class="ck-metric-value{tone_cls}">{html.escape(value)}</div>'
-        f'<div class="ck-metric-sub">{html.escape(sub)}</div></div>'
-    )
-
-
 def _empty_metrics_html() -> str:
     cards = "".join(
-        _metric_card(label, "—", "")
+        components.metric_card(label, "—", "")
         for label in ("Total return", "Sharpe", "Max drawdown", "Win rate")
     )
     return f'<div class="ck-metrics">{cards}</div>'
@@ -260,17 +249,19 @@ def _metrics_html(result: PortfolioBacktestResult) -> str:
     ret_pct = float(m.total_return_pct) * 100
     cards = "".join(
         [
-            _metric_card(
+            components.metric_card(
                 "Total return",
                 f"{ret_pct:+.2f}%",
                 f"€{m.total_return:,.0f}",
                 "pos" if ret_pct >= 0 else "neg",
             ),
-            _metric_card("Sharpe", f"{float(m.sharpe_ratio):.2f}", "annualised"),
-            _metric_card(
+            components.metric_card("Sharpe", f"{float(m.sharpe_ratio):.2f}", "annualised"),
+            components.metric_card(
                 "Max drawdown", f"{float(m.max_drawdown) * 100:.1f}%", "peak to trough", "neg"
             ),
-            _metric_card("Win rate", f"{float(m.win_rate) * 100:.1f}%", f"{m.total_trades} trades"),
+            components.metric_card(
+                "Win rate", f"{float(m.win_rate) * 100:.1f}%", f"{m.total_trades} trades"
+            ),
         ]
     )
     return f'<div class="ck-metrics">{cards}</div>'

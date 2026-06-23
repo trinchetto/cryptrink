@@ -423,13 +423,15 @@ def build_workspace(demo: gr.Blocks, screen_builders: dict[str, Callable[[], Non
 
     # ---- wiring: safety model (paper <-> live) ----
     # Open via gr.update(visible=True) (renders the card); close via a js display toggle
-    # (gr.update(visible=False) does not close a shown Group). The banner js shows the
-    # dialog in paper mode and force-hides it in live mode (where the click is immediate).
+    # (gr.update(visible=False) does not close a shown Group). Mode is read from the
+    # banner's semantic ``.ck-banner-live`` class (set server-side by banner_html), NOT
+    # from a button label, so renaming the toggle button can't break the safety gate.
+    # In paper mode the banner click reveals the confirm dialog; in live mode the click
+    # switches back to paper immediately, so the dialog is force-hidden.
     banner_modal_js = (
-        "() => { const b = document.querySelector('button.ck-banner-btn');"
-        " const m = document.querySelector('.ck-modal'); if (!b || !m) return;"
-        " if (b.textContent.indexOf('Go live') !== -1) m.classList.remove('ck-force-hidden');"
-        " else m.classList.add('ck-force-hidden'); }"
+        "() => { const m = document.querySelector('.ck-modal'); if (!m) return;"
+        " if (document.querySelector('.ck-banner-live')) m.classList.add('ck-force-hidden');"
+        " else m.classList.remove('ck-force-hidden'); }"
     )
     hide_modal_js = (
         "() => { const m = document.querySelector('.ck-modal');"
@@ -472,6 +474,9 @@ def build_workspace(demo: gr.Blocks, screen_builders: dict[str, Callable[[], Non
 
     def _make_select(target: str) -> Callable[[], list[object]]:
         def _select() -> list[object]:
+            # Record the active screen so per-screen refresh timers can skip work when
+            # their screen isn't visible (see Dashboard/Live timers).
+            web_state.set_active_screen(target)
             panel_updates = [gr.update(visible=(s == target)) for s in SCREEN_ORDER]
             nav_updates = [gr.update(elem_classes=_nav_classes(s == target)) for s in SCREEN_ORDER]
             header = screen_header_html(target, web_state.get_last_synced(target))

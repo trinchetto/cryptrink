@@ -7,25 +7,17 @@ A read-only aggregation of data the Status tab already surfaced: it reuses
 
 from __future__ import annotations
 
-import html
 from typing import TYPE_CHECKING
 
 import gradio as gr
 
+from cryptrink.web import components
+from cryptrink.web.components import euro
+from cryptrink.web.state import get_active_screen
 from cryptrink.web.tabs import status
 
 if TYPE_CHECKING:
     import pandas as pd
-
-
-def _metric_card(label: str, value: str, sub: str, tone: str = "") -> str:
-    tone_cls = {"pos": " ck-pos", "neg": " ck-neg"}.get(tone, "")
-    return (
-        '<div class="ck-metric">'
-        f'<div class="ck-metric-label">{html.escape(label)}</div>'
-        f'<div class="ck-metric-value{tone_cls}">{html.escape(value)}</div>'
-        f'<div class="ck-metric-sub">{html.escape(sub)}</div></div>'
-    )
 
 
 def metrics_html(
@@ -41,18 +33,13 @@ def metrics_html(
     """Render the 4-up dashboard metrics row from pre-formatted values."""
     cards = "".join(
         [
-            _metric_card("Account equity", account_equity, "across engines"),
-            _metric_card("Open P&L", open_pnl, open_positions_sub),
-            _metric_card("Realised", realised, realised_sub),
-            _metric_card("Active engines", active_engines, engines_sub),
+            components.metric_card("Account equity", account_equity, "across engines"),
+            components.metric_card("Open P&L", open_pnl, open_positions_sub),
+            components.metric_card("Realised", realised, realised_sub),
+            components.metric_card("Active engines", active_engines, engines_sub),
         ]
     )
     return f'<div class="ck-metrics">{cards}</div>'
-
-
-def _euro(value: float, signed: bool = False) -> str:
-    sign = "+" if (signed and value >= 0) else ("-" if (signed and value < 0) else "")
-    return f"{sign}€{abs(value):,.2f}"
 
 
 def derive_metrics(engines: pd.DataFrame, positions: pd.DataFrame) -> dict[str, str]:
@@ -60,7 +47,7 @@ def derive_metrics(engines: pd.DataFrame, positions: pd.DataFrame) -> dict[str, 
     running = int(engines["running"].sum()) if "running" in engines and len(engines) else 0
     total_engines = len(engines)
     if "current_balance" in engines and len(engines):
-        account_equity = _euro(float(engines["current_balance"].sum()))
+        account_equity = euro(float(engines["current_balance"].sum()))
     else:
         account_equity = "—"
 
@@ -83,8 +70,8 @@ def derive_metrics(engines: pd.DataFrame, positions: pd.DataFrame) -> dict[str, 
 
     return {
         "account_equity": account_equity,
-        "open_pnl": _euro(open_pnl_val, signed=True),
-        "realised": _euro(realised_val, signed=True),
+        "open_pnl": euro(open_pnl_val, signed=True),
+        "realised": euro(realised_val, signed=True),
         "active_engines": str(running),
         "open_positions_sub": f"{open_count} open",
         "realised_sub": f"{closed_count} recent trades",
@@ -119,5 +106,12 @@ def render() -> None:
         orders_output = gr.Dataframe()
 
     outputs = [metrics_output, positions_output, orders_output]
+
+    async def _tick() -> tuple[object, object, object]:
+        # Skip the (3-query) DB refresh unless the Dashboard is the visible screen.
+        if get_active_screen() != "dashboard":
+            return gr.update(), gr.update(), gr.update()
+        return await refresh()
+
     timer = gr.Timer(5.0)
-    timer.tick(fn=refresh, inputs=None, outputs=outputs)
+    timer.tick(fn=_tick, inputs=None, outputs=outputs)

@@ -10,7 +10,6 @@ turns into real-money trading. Starting in live mode is gated by a browser confi
 from __future__ import annotations
 
 import contextlib
-import html
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
@@ -23,11 +22,12 @@ from cryptrink.data.storage import OHLCVRepository
 from cryptrink.runtime import resolve_strategy
 from cryptrink.strategies import registry as strategy_registry
 from cryptrink.strategies.base import SignalType
-from cryptrink.web import charts
+from cryptrink.web import charts, components
 from cryptrink.web.live_loop import LiveLoop, LiveLoopState, get_active_loop, set_active_loop
 from cryptrink.web.live_setup import LiveMode, build_live_components, has_revolutx_credentials
 from cryptrink.web.state import (
     Dataset,
+    get_active_screen,
     get_mode,
     get_runtime,
     list_datasets,
@@ -250,13 +250,6 @@ def refresh_status() -> tuple[str, str]:
 # ----------------------------------------------------------------------
 
 
-def _stat(label: str, value: str) -> str:
-    return (
-        f'<div><div class="ck-metric-label">{html.escape(label)}</div>'
-        f'<div class="ck-stat-value">{html.escape(value)}</div></div>'
-    )
-
-
 def _activity_html(state: LiveLoopState | None) -> str:
     if state is None:
         pairs = [("Iterations", "0"), ("Signals", "0"), ("Executions", "0"), ("Errors", "0")]
@@ -267,17 +260,10 @@ def _activity_html(state: LiveLoopState | None) -> str:
             ("Executions", str(state.execution_count)),
             ("Errors", str(state.error_count)),
         ]
-    cells = "".join(_stat(label, value) for label, value in pairs)
+    cells = "".join(components.stat_cell(label, value) for label, value in pairs)
     return (
         '<div class="ck-card"><div class="ck-card-title">Loop activity</div>'
         f'<div class="ck-stats-row">{cells}</div></div>'
-    )
-
-
-def _kv(label: str, value: str) -> str:
-    return (
-        f'<div class="ck-kv-row"><span style="color:var(--faint)">{html.escape(label)}</span>'
-        f'<span class="ck-mono">{html.escape(value)}</span></div>'
     )
 
 
@@ -295,7 +281,7 @@ def _status_html(
         else '<span class="ck-pill-idle">Idle</span>'
     )
     if state is None:
-        rows = _kv("Status", "No loop started")
+        rows = components.kv_row("Status", "No loop started")
     else:
         mode_text = "—"
         if mode is not None:
@@ -312,16 +298,16 @@ def _status_html(
             last_sig = f"{state.last_signal_type} at {when}"
         rows = "".join(
             [
-                _kv("Symbol", state.symbol or "—"),
-                _kv("Strategy", state.strategy_name or "—"),
-                _kv("Interval", f"{state.interval_seconds:.0f}s"),
-                _kv("Mode", mode_text),
-                _kv("Engine ID", engine_id or "—"),
-                _kv("Last signal", last_sig),
+                components.kv_row("Symbol", state.symbol or "—"),
+                components.kv_row("Strategy", state.strategy_name or "—"),
+                components.kv_row("Interval", f"{state.interval_seconds:.0f}s"),
+                components.kv_row("Mode", mode_text),
+                components.kv_row("Engine ID", engine_id or "—"),
+                components.kv_row("Last signal", last_sig),
             ]
         )
         if state.last_error:
-            rows += _kv("Last error", state.last_error)
+            rows += components.kv_row("Last error", state.last_error)
     return (
         '<div class="ck-card"><div style="display:flex;justify-content:space-between;'
         'align-items:center;margin-bottom:10px">'
@@ -538,11 +524,11 @@ async def test_connection(symbol: str) -> str:
 # Render
 # ----------------------------------------------------------------------
 
-# Browser confirm that gates Start in live mode (the banner button reads "Switch to
-# paper" only when the workspace is in live mode). Throwing cancels the Gradio event.
+# Browser confirm that gates Start in live mode. Live mode is detected via the banner's
+# semantic ``.ck-banner-live`` class (server-set), not a button label. Throwing cancels
+# the Gradio event.
 _START_CONFIRM_JS = (
-    "() => { const b = document.querySelector('button.ck-banner-btn');"
-    " if (b && b.textContent.indexOf('Switch to paper') !== -1) {"
+    "() => { if (document.querySelector('.ck-banner-live')) {"
     " if (!confirm('Start LIVE loop? Real orders will be placed on Revolut X "
     "with account funds until you press Stop.')) throw new Error('cancelled'); } }"
 )
@@ -631,6 +617,26 @@ def render() -> None:
     # ---- wiring ----
     dataset_input.change(fn=load_candle_chart, inputs=[dataset_input], outputs=[chart_output])
     dataset_input.focus(fn=refresh_datasets, inputs=[dataset_input], outputs=[dataset_input])
+
+    # Auto-refresh while the Live screen is open: loop status/activity from the
+    # in-memory snapshot (cheap, 3s) and the candlestick from stored OHLCV (DB read,
+    # 6s — also fills the chart shortly after the screen is opened). Both no-op when
+    # Live isn't the visible screen so they don't poll in the background.
+    def _status_tick() -> tuple[object, object]:
+        if get_active_screen() != "live":
+            return gr.update(), gr.update()
+        return refresh_status()
+
+    status_timer = gr.Timer(3.0)
+    status_timer.tick(fn=_status_tick, inputs=None, outputs=[activity_output, status_output])
+
+    async def _chart_tick(dataset_value: str | None) -> object:
+        if get_active_screen() != "live":
+            return gr.update()
+        return await load_candle_chart(dataset_value)
+
+    chart_timer = gr.Timer(6.0)
+    chart_timer.tick(fn=_chart_tick, inputs=[dataset_input], outputs=[chart_output])
 
     start_btn.click(
         fn=start_loop,

@@ -22,6 +22,7 @@ from cryptrink.execution.suggest import SuggestExecutor
 from cryptrink.runtime import resolve_strategy
 from cryptrink.strategies import registry as strategy_registry
 from cryptrink.strategies.base import StrategyContext
+from cryptrink.web import components
 from cryptrink.web.state import Dataset, get_runtime, list_datasets, list_datasets_sync
 
 # ----------------------------------------------------------------------
@@ -163,7 +164,7 @@ def _verdict(signal_type: str) -> tuple[str, str]:
 def suggestion_card_html(result: dict[str, object]) -> str:
     """Render the suggestion result as a verdict card."""
     label, tone = _verdict(str(result.get("signal_type", "")))
-    tone_cls = {"pos": "ck-pos", "neg": "ck-neg"}.get(tone, "")
+    tone_cls = components.TONE_CLASS.get(tone, "")
     rows = [
         ("Symbol", str(result.get("symbol", "—"))),
         ("Timeframe", str(result.get("timeframe", "—"))),
@@ -172,11 +173,7 @@ def suggestion_card_html(result: dict[str, object]) -> str:
         ("Current price", f"€{result.get('current_price', '—')}"),
         ("Candles used", str(result.get("candles_used", "—"))),
     ]
-    grid = "".join(
-        f'<div class="ck-kv-row"><span style="color:var(--faint)">{html.escape(k)}</span>'
-        f'<span class="ck-mono">{html.escape(v)}</span></div>'
-        for k, v in rows
-    )
+    grid = "".join(components.kv_row(k, v) for k, v in rows)
     badge = html.escape(str(result.get("signal_strength", "")))
     return (
         '<div class="ck-card">'

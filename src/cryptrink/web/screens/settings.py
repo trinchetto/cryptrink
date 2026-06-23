@@ -7,12 +7,11 @@ mutates config — values come from environment / config files.
 
 from __future__ import annotations
 
-import html
 from typing import TYPE_CHECKING
 
 import gradio as gr
 
-from cryptrink.web import theme
+from cryptrink.web import components, theme
 from cryptrink.web.state import get_runtime
 
 if TYPE_CHECKING:
@@ -59,23 +58,17 @@ def risk_rows(settings: Settings) -> list[tuple[str, str]]:
     ]
 
 
-def _kv(label: str, value: str, tone: str = "") -> str:
-    tone_cls = {"ok": "ck-pos", "dim": ""}.get(tone, "")
-    return (
-        f'<div class="ck-kv-row"><span style="color:var(--faint)">{html.escape(label)}</span>'
-        f'<span class="ck-mono {tone_cls}">{html.escape(value)}</span></div>'
-    )
-
-
 def _connection_html(settings: Settings) -> str:
-    rows = "".join(_kv(label, value, tone) for label, value, tone in connection_rows(settings))
+    rows = "".join(
+        components.kv_row(label, value, tone) for label, value, tone in connection_rows(settings)
+    )
     return (
         f'<div class="ck-card"><div class="ck-section-label">Revolut X connection</div>{rows}</div>'
     )
 
 
 def _risk_html(settings: Settings) -> str:
-    rows = "".join(_kv(label, value) for label, value in risk_rows(settings))
+    rows = "".join(components.kv_row(label, value) for label, value in risk_rows(settings))
     return f'<div class="ck-card"><div class="ck-section-label">Risk defaults</div>{rows}</div>'
 
 
