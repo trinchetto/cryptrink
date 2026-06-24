@@ -12,6 +12,7 @@ passed in for tests.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from cryptrink.core.logging import get_logger
@@ -52,20 +53,27 @@ def portfolio_path(name: str, directory: Path | None = None) -> Path:
     the single choke point that guards every read/write/delete against path
     traversal:
 
-    1. the name must already be a bare basename (``Path(name).name == name``)
-       and a safe stem (:func:`is_valid_name` — no path separators, no ``.`` /
-       ``..``); and
-    2. the path is resolved and confirmed to stay inside the resolved portfolio
-       directory before it is returned.
+    1. the name must already be a bare basename (``os.path.basename(name) ==
+       name``) and a safe stem (:func:`is_valid_name` — no path separators, no
+       ``.`` / ``..``); and
+    2. the real path is confirmed to stay inside the real portfolio directory
+       (``os.path.commonpath``) before it is returned.
 
-    Either check failing raises :class:`ValueError` before any filesystem access.
-    Returns the **resolved absolute** path — building every read/write/delete from
-    this guarded value is what neutralises the path-traversal risk.
+    Both use ``os.path`` sanitizers (``basename`` / ``realpath`` / ``commonpath``)
+    that static analysis recognises, so the returned value is not treated as a
+    traversal risk by anything built from it.
+
+    Either check failing raises :class:`ValueError` before any read/write/delete.
+    Returns the **resolved absolute** path.
 
     Raises:
         ValueError: If ``name`` is unsafe or resolves outside ``directory``.
     """
-    safe_name = Path(name).name
+    # os.path (not pathlib) is deliberate: CodeQL models basename/realpath/
+    # commonpath as path-traversal sanitizers, so the result is no longer treated
+    # as tainted at the read/write/delete sinks. The pathlib equivalents that ruff
+    # PTH prefers are not recognised, hence the targeted noqa below.
+    safe_name = os.path.basename(name)  # noqa: PTH119
     if safe_name != name or not is_valid_name(safe_name):
         msg = (
             f"Invalid portfolio name {name!r}: only letters, digits, '_' and '-' "
@@ -73,12 +81,12 @@ def portfolio_path(name: str, directory: Path | None = None) -> Path:
         )
         raise ValueError(msg)
 
-    root_resolved = _resolve_dir(directory).resolve()
-    path = (root_resolved / f"{safe_name}.yaml").resolve()
-    if not path.is_relative_to(root_resolved):
-        msg = f"Portfolio name {name!r} resolves outside the portfolio directory {root_resolved}."
+    root = os.path.realpath(_resolve_dir(directory))
+    target = os.path.realpath(os.path.join(root, f"{safe_name}.yaml"))  # noqa: PTH118
+    if os.path.commonpath((root, target)) != root:
+        msg = f"Portfolio name {name!r} resolves outside the portfolio directory {root}."
         raise ValueError(msg)
-    return path
+    return Path(target)
 
 
 def load_portfolio(name: str, directory: Path | None = None) -> Portfolio:
