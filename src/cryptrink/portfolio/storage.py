@@ -52,8 +52,9 @@ def portfolio_path(name: str, directory: Path | None = None) -> Path:
     the single choke point that guards every read/write/delete against path
     traversal:
 
-    1. the name must be a safe bare stem (:func:`is_valid_name` — no path
-       separators, no ``.`` / ``..``); and
+    1. the name must already be a bare basename (``Path(name).name == name`` —
+       a sanitizer CodeQL recognizes) and a safe stem (:func:`is_valid_name` —
+       no path separators, no ``.`` / ``..``); and
     2. defence-in-depth, the resolved file must stay inside the resolved
        portfolio directory.
 
@@ -71,16 +72,11 @@ def portfolio_path(name: str, directory: Path | None = None) -> Path:
         raise ValueError(msg)
 
     root = _resolve_dir(directory)
-    root_resolved = root.resolve(strict=False)
-    path = root_resolved / f"{safe_name}.yaml"
-    path_resolved = path.resolve(strict=False)
-    if not path_resolved.is_relative_to(root_resolved):
-        msg = (
-            f"Portfolio name {name!r} resolves outside the portfolio directory "
-            f"{root_resolved}."
-        )
+    path = root / f"{safe_name}.yaml"
+    if not path.resolve().is_relative_to(root.resolve()):
+        msg = f"Portfolio name {name!r} resolves outside the portfolio directory {root}."
         raise ValueError(msg)
-    return path_resolved
+    return path
 
 
 def load_portfolio(name: str, directory: Path | None = None) -> Portfolio:
