@@ -34,6 +34,17 @@ import yaml
 _NAME_RE = re.compile(r"^[a-zA-Z0-9_\-]+$")
 
 
+def is_valid_name(name: str) -> bool:
+    """Return True if ``name`` is a safe portfolio name.
+
+    A portfolio name doubles as a filename stem, so it is restricted to letters,
+    digits, ``_`` and ``-``. This excludes path separators and ``.`` / ``..``, so
+    a name can never be used to traverse out of the portfolio directory — the
+    storage layer relies on this (see :func:`cryptrink.portfolio.storage.portfolio_path`).
+    """
+    return bool(_NAME_RE.match(name))
+
+
 @dataclass
 class Allocation:
     """A single ``(symbol, strategy, params)`` slot inside a portfolio."""
@@ -82,7 +93,7 @@ class Portfolio:
     allocations: list[Allocation] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        if not _NAME_RE.match(self.name):
+        if not is_valid_name(self.name):
             raise ValueError(
                 f"Portfolio name {self.name!r} must match {_NAME_RE.pattern} "
                 "(used as a filename — no spaces or special characters)."

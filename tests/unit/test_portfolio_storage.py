@@ -102,3 +102,32 @@ class TestDelete:
 class TestEmptyDirectory:
     def test_list_returns_empty_for_missing_dir(self, tmp_path: Path) -> None:
         assert list_portfolio_names(directory=tmp_path / "does_not_exist") == []
+
+
+class TestPathTraversal:
+    """A tampered name must never read/write/delete outside the portfolio dir."""
+
+    @pytest.mark.parametrize(
+        "evil",
+        [
+            "../evil",
+            "../../etc/passwd",
+            "/etc/passwd",
+            "sub/evil",
+            "..",
+            "a.b",  # a dot is not allowed in a bare stem
+            "with space",
+        ],
+    )
+    def test_portfolio_path_rejects_unsafe_names(self, evil: str, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match=r"Invalid portfolio name|resolves outside"):
+            portfolio_path(evil, directory=tmp_path)
+
+    def test_load_rejects_traversal(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="Invalid portfolio name"):
+            load_portfolio("../../etc/passwd", directory=tmp_path)
+
+    def test_delete_rejects_traversal(self, tmp_path: Path) -> None:
+        # Must raise (reject), not silently no-op, and must not touch the file.
+        with pytest.raises(ValueError, match="Invalid portfolio name"):
+            delete_portfolio("../../etc/passwd", directory=tmp_path)
