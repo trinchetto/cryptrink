@@ -4328,4 +4328,4 @@ web = ["gradio", "plotly", "requests"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.13,<3.15"
-content-hash = "f920d722eafdf242fa49cbc3446ef4b2da76f57b7d4f381d011be8503a8c2460"
+content-hash = "f4fecdfc295d600392daf4de2e3c9f386b5d04322a1b7f6a75024cbe8de1f2d7"
