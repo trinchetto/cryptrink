@@ -1,15 +1,31 @@
-# To get started with Dependabot version updates, you'll need to specify which
-# package ecosystems to update and where the package manifests are located.
-# Please see the documentation for all configuration options:
+# Dependabot configuration.
 # https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+#
+# Python deps are managed by Poetry (pyproject.toml + poetry.lock). requirements.txt
+# is a GENERATED artifact — it exists only so Hugging Face Spaces can `pip install`
+# it, and is exported from poetry.lock via:
+#   poetry export --without-hashes --extras web -o requirements.txt
+# Keeping it in sync is enforced by the pre-commit hook (poetry-export-requirements)
+# and the CI "requirements.txt sync" job (.github/scripts/check_requirements_sync.py),
+# NOT by Dependabot. Updates are grouped into a single weekly PR so the lock is
+# re-resolved once per cycle (separate per-package PRs previously caused the lock and
+# requirements.txt to drift apart on merge).
 
 version: 2
 updates:
-  - package-ecosystem: "pip" # See documentation for possible values
-    directory: "/" # Location of package manifests
+  - package-ecosystem: "pip" # Poetry project (pyproject.toml + poetry.lock)
+    directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
