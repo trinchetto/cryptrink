@@ -42,7 +42,8 @@ class TestRoundTrip:
         portfolio = _make_portfolio("alpha")
         path = save_portfolio(portfolio, directory=tmp_path)
         assert path.exists()
-        assert path == tmp_path / "alpha.yaml"
+        # portfolio_path returns the resolved absolute path (path-traversal guard).
+        assert path == (tmp_path / "alpha.yaml").resolve()
 
         loaded = load_portfolio("alpha", directory=tmp_path)
         assert loaded == portfolio

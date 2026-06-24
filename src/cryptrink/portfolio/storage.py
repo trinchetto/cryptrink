@@ -52,13 +52,15 @@ def portfolio_path(name: str, directory: Path | None = None) -> Path:
     the single choke point that guards every read/write/delete against path
     traversal:
 
-    1. the name must already be a bare basename (``Path(name).name == name`` —
-       a sanitizer CodeQL recognizes) and a safe stem (:func:`is_valid_name` —
-       no path separators, no ``.`` / ``..``); and
-    2. defence-in-depth, the resolved file must stay inside the resolved
-       portfolio directory.
+    1. the name must already be a bare basename (``Path(name).name == name``)
+       and a safe stem (:func:`is_valid_name` — no path separators, no ``.`` /
+       ``..``); and
+    2. the path is resolved and confirmed to stay inside the resolved portfolio
+       directory before it is returned.
 
     Either check failing raises :class:`ValueError` before any filesystem access.
+    Returns the **resolved absolute** path — building every read/write/delete from
+    this guarded value is what neutralises the path-traversal risk.
 
     Raises:
         ValueError: If ``name`` is unsafe or resolves outside ``directory``.
@@ -71,24 +73,22 @@ def portfolio_path(name: str, directory: Path | None = None) -> Path:
         )
         raise ValueError(msg)
 
-    root = _resolve_dir(directory)
-    path = root / f"{safe_name}.yaml"
-    if not path.resolve().is_relative_to(root.resolve()):
-        msg = f"Portfolio name {name!r} resolves outside the portfolio directory {root}."
+    root_resolved = _resolve_dir(directory).resolve()
+    path = (root_resolved / f"{safe_name}.yaml").resolve()
+    if not path.is_relative_to(root_resolved):
+        msg = f"Portfolio name {name!r} resolves outside the portfolio directory {root_resolved}."
         raise ValueError(msg)
     return path
 
 
 def load_portfolio(name: str, directory: Path | None = None) -> Portfolio:
     """Read and parse a portfolio file by name."""
+    # portfolio_path() returns a resolved path proven to sit inside the portfolio
+    # directory (name validated + containment-checked), so it is safe to read.
     path = portfolio_path(name, directory)
-    # CodeQL py/path-injection is suppressed on the next two lines: portfolio_path()
-    # rejects any name that isn't a safe stem AND enforces directory containment
-    # before returning (see its docstring), so ``path`` cannot traverse out of the
-    # portfolio directory. CodeQL does not track that interprocedural barrier.
-    if not path.exists():  # codeql[py/path-injection]
+    if not path.exists():
         raise FileNotFoundError(f"Portfolio {name!r} not found at {path}")
-    text = path.read_text(encoding="utf-8")  # codeql[py/path-injection]
+    text = path.read_text(encoding="utf-8")
     portfolio = load_yaml(text)
     if portfolio.name != name:
         # Be loud about a name/file mismatch — silently renaming the
@@ -121,12 +121,11 @@ def save_portfolio(portfolio: Portfolio, directory: Path | None = None) -> Path:
 
 def delete_portfolio(name: str, directory: Path | None = None) -> bool:
     """Delete a portfolio by name. Returns True if a file was removed."""
+    # portfolio_path() returns a resolved path proven to sit inside the portfolio
+    # directory (name validated + containment-checked), so it is safe to delete.
     path = portfolio_path(name, directory)
-    # CodeQL py/path-injection suppressed: portfolio_path() validated the name and
-    # enforced directory containment (see its docstring), so ``path`` is confined to
-    # the portfolio directory. CodeQL does not track that interprocedural barrier.
-    if not path.exists():  # codeql[py/path-injection]
+    if not path.exists():
         return False
-    path.unlink()  # codeql[py/path-injection]
+    path.unlink()
     logger.info("portfolio_deleted", name=name, path=str(path))
     return True
