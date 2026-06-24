@@ -79,9 +79,13 @@ def portfolio_path(name: str, directory: Path | None = None) -> Path:
 def load_portfolio(name: str, directory: Path | None = None) -> Portfolio:
     """Read and parse a portfolio file by name."""
     path = portfolio_path(name, directory)
-    if not path.exists():
+    # CodeQL py/path-injection is suppressed on the next two lines: portfolio_path()
+    # rejects any name that isn't a safe stem AND enforces directory containment
+    # before returning (see its docstring), so ``path`` cannot traverse out of the
+    # portfolio directory. CodeQL does not track that interprocedural barrier.
+    if not path.exists():  # codeql[py/path-injection]
         raise FileNotFoundError(f"Portfolio {name!r} not found at {path}")
-    text = path.read_text(encoding="utf-8")
+    text = path.read_text(encoding="utf-8")  # codeql[py/path-injection]
     portfolio = load_yaml(text)
     if portfolio.name != name:
         # Be loud about a name/file mismatch — silently renaming the
@@ -115,8 +119,11 @@ def save_portfolio(portfolio: Portfolio, directory: Path | None = None) -> Path:
 def delete_portfolio(name: str, directory: Path | None = None) -> bool:
     """Delete a portfolio by name. Returns True if a file was removed."""
     path = portfolio_path(name, directory)
-    if not path.exists():
+    # CodeQL py/path-injection suppressed: portfolio_path() validated the name and
+    # enforced directory containment (see its docstring), so ``path`` is confined to
+    # the portfolio directory. CodeQL does not track that interprocedural barrier.
+    if not path.exists():  # codeql[py/path-injection]
         return False
-    path.unlink()
+    path.unlink()  # codeql[py/path-injection]
     logger.info("portfolio_deleted", name=name, path=str(path))
     return True
