@@ -62,18 +62,25 @@ def portfolio_path(name: str, directory: Path | None = None) -> Path:
     Raises:
         ValueError: If ``name`` is unsafe or resolves outside ``directory``.
     """
-    if not is_valid_name(name):
+    safe_name = Path(name).name
+    if safe_name != name or not is_valid_name(safe_name):
         msg = (
             f"Invalid portfolio name {name!r}: only letters, digits, '_' and '-' "
             "are allowed (it is used as a filename)."
         )
         raise ValueError(msg)
+
     root = _resolve_dir(directory)
-    path = root / f"{name}.yaml"
-    if not path.resolve().is_relative_to(root.resolve()):
-        msg = f"Portfolio name {name!r} resolves outside the portfolio directory {root}."
+    root_resolved = root.resolve(strict=False)
+    path = root_resolved / f"{safe_name}.yaml"
+    path_resolved = path.resolve(strict=False)
+    if not path_resolved.is_relative_to(root_resolved):
+        msg = (
+            f"Portfolio name {name!r} resolves outside the portfolio directory "
+            f"{root_resolved}."
+        )
         raise ValueError(msg)
-    return path
+    return path_resolved
 
 
 def load_portfolio(name: str, directory: Path | None = None) -> Portfolio:
