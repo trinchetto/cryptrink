@@ -91,12 +91,17 @@ def portfolio_path(name: str, directory: Path | None = None) -> Path:
 
 def load_portfolio(name: str, directory: Path | None = None) -> Portfolio:
     """Read and parse a portfolio file by name."""
-    # portfolio_path() returns a resolved path proven to sit inside the portfolio
-    # directory (name validated + containment-checked), so it is safe to read.
     path = portfolio_path(name, directory)
-    if not path.exists():
-        raise FileNotFoundError(f"Portfolio {name!r} not found at {path}")
-    text = path.read_text(encoding="utf-8")
+    # Re-assert containment in this function so the read sink is provably guarded
+    # for static analysis: CodeQL trusts a path-traversal guard only when it is
+    # local to the sink. Redundant at runtime — portfolio_path already enforced it.
+    root = os.path.realpath(_resolve_dir(directory))
+    safe = Path(os.path.realpath(path))
+    if os.path.commonpath((root, str(safe))) != root:
+        raise ValueError(f"Portfolio {name!r} resolves outside {root}.")
+    if not safe.exists():
+        raise FileNotFoundError(f"Portfolio {name!r} not found at {safe}")
+    text = safe.read_text(encoding="utf-8")
     portfolio = load_yaml(text)
     if portfolio.name != name:
         # Be loud about a name/file mismatch — silently renaming the
@@ -129,11 +134,15 @@ def save_portfolio(portfolio: Portfolio, directory: Path | None = None) -> Path:
 
 def delete_portfolio(name: str, directory: Path | None = None) -> bool:
     """Delete a portfolio by name. Returns True if a file was removed."""
-    # portfolio_path() returns a resolved path proven to sit inside the portfolio
-    # directory (name validated + containment-checked), so it is safe to delete.
     path = portfolio_path(name, directory)
-    if not path.exists():
+    # See load_portfolio: local containment guard so the delete sink is guarded
+    # for static analysis. Redundant at runtime — portfolio_path already enforced it.
+    root = os.path.realpath(_resolve_dir(directory))
+    safe = Path(os.path.realpath(path))
+    if os.path.commonpath((root, str(safe))) != root:
+        raise ValueError(f"Portfolio {name!r} resolves outside {root}.")
+    if not safe.exists():
         return False
-    path.unlink()
-    logger.info("portfolio_deleted", name=name, path=str(path))
+    safe.unlink()
+    logger.info("portfolio_deleted", name=name, path=str(safe))
     return True
