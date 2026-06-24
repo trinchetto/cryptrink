@@ -15,7 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from cryptrink.core.logging import get_logger
-from cryptrink.portfolio.models import Portfolio, dump_yaml, load_yaml
+from cryptrink.portfolio.models import Portfolio, dump_yaml, is_valid_name, load_yaml
 
 logger = get_logger(__name__)
 
@@ -45,8 +45,41 @@ def list_portfolio_names(directory: Path | None = None) -> list[str]:
 
 
 def portfolio_path(name: str, directory: Path | None = None) -> Path:
-    """Return the on-disk path for a portfolio by name."""
-    return _resolve_dir(directory) / f"{name}.yaml"
+    """Return the on-disk path for a portfolio by name.
+
+    ``name`` is attacker-influenceable (it flows from the UI dropdown / YAML
+    ``name`` field, which a tampered request could set to anything), so this is
+    the single choke point that guards every read/write/delete against path
+    traversal:
+
+    1. the name must be a safe stem (:func:`is_valid_name` — only letters,
+       digits, ``_`` and ``-``, so no path separators and no ``.`` / ``..``); and
+    2. defence-in-depth, the resolved file must stay inside the resolved
+       portfolio directory.
+
+    Either check failing raises :class:`ValueError` before any filesystem access.
+
+    Note:
+        CodeQL's ``py/path-injection`` flags the read/delete sinks that build on
+        this path. It does not track that the two checks below neutralise
+        traversal across the function boundary, so those alerts are a reviewed
+        false positive (PR #69) — the validation here is the real safeguard.
+
+    Raises:
+        ValueError: If ``name`` is unsafe or resolves outside ``directory``.
+    """
+    if not is_valid_name(name):
+        msg = (
+            f"Invalid portfolio name {name!r}: only letters, digits, '_' and '-' "
+            "are allowed (it is used as a filename)."
+        )
+        raise ValueError(msg)
+    root = _resolve_dir(directory)
+    path = root / f"{name}.yaml"
+    if not path.resolve().is_relative_to(root.resolve()):
+        msg = f"Portfolio name {name!r} resolves outside the portfolio directory {root}."
+        raise ValueError(msg)
+    return path
 
 
 def load_portfolio(name: str, directory: Path | None = None) -> Portfolio:

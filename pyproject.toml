@@ -29,7 +29,7 @@ dependencies = [
 
     # Cryptography for Revolut X Ed25519 signing
     "pynacl>=1.5,<2.0",
-    "cryptography>=48.0.1,<49.0",
+    "cryptography>=49.0.0,<50.0",
 
     # Data validation & settings
     "pydantic>=2.10,<3.0",
@@ -74,11 +74,14 @@ web = [
     # gradio's CLI subpackage imports `requests` eagerly during `import gradio`;
     # not declaring it here breaks app.py on a clean install.
     "requests>=2.32,<3.0",
+    # Interactive equity-curve and candlestick charts in the web UI (gr.Plot).
+    "plotly>=5.24,<7.0",
 ]
 all = [
     "discord.py>=2.4,<3.0",
     "gradio>=5.30,<7.0",
     "requests>=2.32,<3.0",
+    "plotly>=5.24,<7.0",
 ]
 
 [project.scripts]

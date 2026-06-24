@@ -7,6 +7,8 @@ singleton and registers the built-in strategies on first access.
 
 from __future__ import annotations
 
+import threading
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, NamedTuple
@@ -21,6 +23,26 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from cryptrink.core.config import Settings
+
+
+# Redesign UI state shared by every screen via the WebRuntime singleton.
+LOG_BUFFER_MAX = 500
+_VALID_MODES = ("paper", "live")
+_lock = threading.Lock()
+
+
+class LogEvent(NamedTuple):
+    """One line in the docked global terminal.
+
+    ``source`` is a short tag (sys / data / backtest / portfolio / live) used both
+    for colour-coding and the terminal source filter; ``level`` is one of
+    ok / info / warn / err and colours the message text.
+    """
+
+    time: str  # HH:MM:SS, UTC
+    source: str
+    level: str
+    message: str
 
 
 class Dataset(NamedTuple):
@@ -82,6 +104,18 @@ class WebRuntime:
     settings: Settings
     session_factory: async_sessionmaker[AsyncSession]
     cached_symbols: list[str] = field(default_factory=list)
+    # --- redesign UI state ---
+    # NOTE: These are PROCESS-GLOBAL, shared across every connected browser session
+    # (the singleton is per-process, not per-user). That is intentional: this is a
+    # single-operator HF Space with one live-loop singleton and one database, so a
+    # global mode / log buffer / sync state is the correct model and matches the
+    # existing live-loop singleton. For a multi-user or horizontally-scaled
+    # deployment, ``mode`` + the log buffer would need to move to per-session
+    # ``gr.State`` so one operator's mode switch / logs don't leak to another.
+    mode: str = "paper"
+    active_screen: str = "portfolio"
+    log_buffer: deque[LogEvent] = field(default_factory=lambda: deque(maxlen=LOG_BUFFER_MAX))
+    last_synced: dict[str, str] = field(default_factory=dict)
 
 
 _runtime: WebRuntime | None = None
@@ -252,3 +286,85 @@ async def flush_runtime() -> None:
     old_engine = runtime.session_factory.kw["bind"]
     runtime.session_factory = build_session_factory(runtime.settings.database.url)
     await old_engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Redesign UI state helpers (mode, shared log buffer, sync stamps)
+#
+# These mirror the get_symbol_choices / set_cached_symbols pattern: free
+# functions over the WebRuntime singleton. The buffer and stamps are mutated
+# under ``_lock`` because Gradio can serve handlers on a threadpool and a
+# background live-loop worker may append log lines concurrently. They live on
+# WebRuntime so ``reset_runtime()`` clears them between tests (xdist-safe).
+# ---------------------------------------------------------------------------
+
+
+def _now_hms() -> str:
+    """Return the current UTC time as ``HH:MM:SS`` (terminal/stamp format)."""
+    return datetime.now(UTC).strftime("%H:%M:%S")
+
+
+def get_mode() -> str:
+    """Return the active trading mode (``"paper"`` | ``"live"``)."""
+    return get_runtime().mode
+
+
+def set_mode(mode: str) -> None:
+    """Set the active trading mode.
+
+    Raises:
+        ValueError: If ``mode`` is not ``"paper"`` or ``"live"``.
+    """
+    if mode not in _VALID_MODES:
+        msg = f"mode must be one of {_VALID_MODES}, got {mode!r}"
+        raise ValueError(msg)
+    with _lock:
+        get_runtime().mode = mode
+
+
+def get_active_screen() -> str:
+    """Return the sidebar screen the operator is currently viewing."""
+    return get_runtime().active_screen
+
+
+def set_active_screen(screen: str) -> None:
+    """Record the active sidebar screen (used to gate per-screen refresh timers)."""
+    with _lock:
+        get_runtime().active_screen = screen
+
+
+def log_event(source: str, level: str, message: str) -> None:
+    """Append one line to the shared docked-terminal buffer."""
+    event = LogEvent(_now_hms(), source, level, message)
+    with _lock:
+        get_runtime().log_buffer.append(event)
+
+
+def get_log_events(source_filter: str | None = None) -> list[LogEvent]:
+    """Return buffered log events, optionally filtered by source.
+
+    ``None`` / ``"all"`` returns everything; any other value keeps only events
+    whose ``source`` matches (the terminal's source-filter chips pass this).
+    """
+    with _lock:
+        events = list(get_runtime().log_buffer)
+    if source_filter in (None, "all"):
+        return events
+    return [event for event in events if event.source == source_filter]
+
+
+def clear_log_events() -> None:
+    """Empty the shared log buffer (the terminal's ``clear`` action)."""
+    with _lock:
+        get_runtime().log_buffer.clear()
+
+
+def mark_synced(key: str) -> None:
+    """Record that ``key`` (e.g. ``"datasets"``) was auto-synced just now."""
+    with _lock:
+        get_runtime().last_synced[key] = _now_hms()
+
+
+def get_last_synced(key: str) -> str | None:
+    """Return the ``HH:MM:SS`` stamp for ``key``, or ``None`` if never synced."""
+    return get_runtime().last_synced.get(key)

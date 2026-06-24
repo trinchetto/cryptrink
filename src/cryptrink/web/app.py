@@ -7,8 +7,10 @@ from typing import TYPE_CHECKING
 import gradio as gr
 
 from cryptrink.core.logging import get_logger
+from cryptrink.web import shell, theme
+from cryptrink.web.screens import dashboard, settings
 from cryptrink.web.state import get_runtime
-from cryptrink.web.tabs import backtest, data, live, portfolio, status, suggest
+from cryptrink.web.tabs import backtest, data, live, portfolio, suggest
 
 if TYPE_CHECKING:
     from cryptrink.core.config import Settings
@@ -60,18 +62,27 @@ def build_demo() -> gr.Blocks:
     log_credential_status(runtime.settings)
 
     with gr.Blocks(title="Cryptrink") as demo:
-        gr.Markdown(
-            "# Cryptrink\n"
-            "Crypto trading agent for Revolut X — backtests, suggestions, "
-            "live trading, and engine state."
+        # Gradio 6 moved css/js/head off the Blocks constructor; inject the fonts +
+        # stylesheet as an (invisible) HTML block so it applies regardless of how the
+        # app is launched (local `python app.py` vs HF Spaces), and run the boot JS
+        # (theme restore + terminal autoscroll) via a load event.
+        gr.HTML(
+            theme.fonts_head() + f"<style>{theme.build_css()}</style>",
+            elem_id="ck-style-inject",
         )
-        with gr.Tabs():
-            backtest.render()
-            portfolio.render()
-            suggest.render()
-            live.render()
-            data.render()
-            status.render()
+        shell.build_workspace(
+            demo,
+            {
+                "backtest": backtest.render,
+                "portfolio": portfolio.render,
+                "suggest": suggest.render,
+                "live": live.render,
+                "dashboard": dashboard.render,
+                "data": data.render,
+                "settings": settings.render,
+            },
+        )
+        demo.load(fn=None, js=theme.boot_js())
 
     return demo  # type: ignore[no-any-return]
 

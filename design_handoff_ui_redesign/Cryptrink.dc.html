@@ -1,0 +1,1130 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body { font-family: 'IBM Plex Sans', system-ui, sans-serif; -webkit-font-smoothing: antialiased; overflow: auto; }
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--faint); }
+  @keyframes ck-blink { 0%, 60% { opacity: 1; } 61%, 100% { opacity: 0.25; } }
+  @keyframes ck-pulse { 0% { box-shadow: 0 0 0 0 var(--live-glow); } 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+  @keyframes ck-spin { to { transform: rotate(360deg); } }
+  @keyframes ck-fadein { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+</style>
+</helmet>
+
+<div id="ck-root" ref="{{ root }}" style="--bg:#14171c; --surface:#1b1f25; --surface2:#232830; --border:#2e343d; --text:#e7e9ec; --dim:#9aa1ab; --faint:#6b7280; --accent:#3fd9a8; --accent-dim:#1f6b56; --accent-soft:#16302a; --pos:#3fd98a; --neg:#f0616d; --paper:#f0b54a; --live:#ef4658; --live-glow:rgba(239,70,88,0.5); --shadow:rgba(0,0,0,0.4); height:100vh; min-width:1180px; display:grid; grid-template-rows:auto auto 1fr auto; background:var(--bg); color:var(--text); overflow:hidden; font-size:13px;">
+
+  <!-- ============ HEADER ============ -->
+  <header style="display:flex; align-items:center; gap:18px; height:50px; padding:0 18px; border-bottom:1px solid var(--border); background:var(--surface); flex:none; z-index:30;">
+    <div style="display:flex; align-items:center; gap:9px;">
+      <div style="width:22px; height:22px; border-radius:6px; background:var(--accent); display:flex; align-items:center; justify-content:center; color:#0a1410; font-weight:700; font-size:13px; font-family:'IBM Plex Mono',monospace;">c</div>
+      <span style="font-weight:600; font-size:15px; letter-spacing:-0.2px;">cryptrink</span>
+      <span style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:var(--faint); border:1px solid var(--border); border-radius:4px; padding:1px 5px; margin-left:2px;">Revolut X</span>
+    </div>
+
+    <div style="display:flex; align-items:center; gap:7px; padding:4px 10px; border:1px solid var(--border); border-radius:7px; background:var(--bg);">
+      <span style="width:7px; height:7px; border-radius:50%; background:var(--pos);"></span>
+      <span style="font-size:11px; color:var(--dim);">Exchange</span>
+      <span style="font-size:11px; font-weight:600; color:var(--pos);">connected</span>
+    </div>
+
+    <div style="flex:1;"></div>
+
+    <div style="text-align:right; line-height:1.25;">
+      <div style="font-size:10px; color:var(--faint); text-transform:uppercase; letter-spacing:0.5px;">Account balance</div>
+      <div style="font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:15px;">€{{ balance }}</div>
+    </div>
+
+    <div style="display:flex; align-items:center; gap:6px; padding:5px 9px; border:1px solid var(--border); border-radius:7px;">
+      <span style="font-size:10px; color:var(--faint); text-transform:uppercase; letter-spacing:0.5px;">Synced</span>
+      <span style="width:6px; height:6px; border-radius:50%; background:var(--accent); animation:ck-blink 2s infinite;"></span>
+      <span style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--dim);">{{ lastSync }}</span>
+    </div>
+
+    <div style="display:flex; background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:2px; gap:2px;">
+      <sc-for list="{{ themeBtns }}" as="t" hint-placeholder-count="3">
+        <button onClick="{{ t.onClick }}" title="{{ t.label }}" style="{{ t.style }}">{{ t.dot }}</button>
+      </sc-for>
+    </div>
+  </header>
+
+  <!-- ============ MODE BANNER (loud) ============ -->
+  <div style="{{ bannerStyle }}">
+    <div style="display:flex; align-items:center; gap:11px;">
+      <span style="{{ bannerDotStyle }}"></span>
+      <span style="font-weight:700; font-size:13px; letter-spacing:0.3px;">{{ bannerTitle }}</span>
+      <span style="opacity:0.85; font-size:12px;">{{ bannerSub }}</span>
+    </div>
+    <div style="flex:1;"></div>
+    <span style="font-family:'IBM Plex Mono',monospace; font-size:11px; opacity:0.8;">{{ bannerMeta }}</span>
+    <button onClick="{{ toggleMode }}" style="{{ bannerBtnStyle }}">{{ bannerBtnText }}</button>
+  </div>
+
+  <!-- ============ BODY: sidebar | main | rail ============ -->
+  <div style="display:grid; grid-template-columns:212px 1fr 296px; min-height:0; overflow:hidden;">
+
+    <!-- SIDEBAR -->
+    <nav style="border-right:1px solid var(--border); background:var(--surface); padding:14px 10px; overflow-y:auto; display:flex; flex-direction:column; gap:4px;">
+      <sc-for list="{{ navGroups }}" as="grp" hint-placeholder-count="4">
+        <div style="font-size:9.5px; font-weight:600; letter-spacing:1.2px; color:var(--faint); text-transform:uppercase; padding:13px 9px 5px;">{{ grp.label }}</div>
+        <sc-for list="{{ grp.items }}" as="it" hint-placeholder-count="2">
+          <button onClick="{{ it.onClick }}" style="{{ it.style }}">
+            <span style="{{ it.barStyle }}"></span>
+            <span style="{{ it.tagStyle }}">{{ it.tag }}</span>
+            <span style="flex:1; text-align:left;">{{ it.label }}</span>
+            <span style="{{ it.badgeStyle }}">{{ it.badge }}</span>
+          </button>
+        </sc-for>
+      </sc-for>
+      <div style="flex:1;"></div>
+      <div style="padding:10px 9px; border-top:1px solid var(--border); margin-top:8px;">
+        <div style="font-size:10px; color:var(--faint);">build</div>
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--dim);">cryptrink · 0.4.0</div>
+      </div>
+    </nav>
+
+    <!-- MAIN CANVAS -->
+    <main style="overflow-y:auto; min-width:0; position:relative;">
+
+      <!-- screen header -->
+      <div style="display:flex; align-items:flex-end; gap:14px; padding:15px 26px 12px; border-bottom:1px solid var(--border); position:sticky; top:0; background:var(--bg); z-index:10;">
+        <div>
+          <div style="font-size:20px; font-weight:600; letter-spacing:-0.3px;">{{ screenTitle }}</div>
+          <div style="font-size:12.5px; color:var(--dim); margin-top:3px; max-width:640px;">{{ screenSub }}</div>
+        </div>
+        <div style="flex:1;"></div>
+        <div style="display:flex; align-items:center; gap:7px; font-size:11px; color:var(--faint);">
+          <span style="width:6px; height:6px; border-radius:50%; background:var(--pos);"></span>
+          <span>auto-synced {{ screenSynced }}</span>
+        </div>
+      </div>
+
+      <div style="padding:22px 26px 40px;">
+
+        <!-- ===== PORTFOLIO ===== -->
+        <sc-if value="{{ isPortfolio }}" hint-placeholder-val="{{ true }}">
+          <div style="display:grid; grid-template-columns:300px 1fr; gap:20px; animation:ck-fadein 0.25s;">
+            <!-- left: portfolio picker + allocations -->
+            <div style="display:flex; flex-direction:column; gap:14px;">
+              <div style="background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:14px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                  <span style="font-size:11px; font-weight:600; letter-spacing:0.4px; color:var(--dim); text-transform:uppercase;">Portfolios</span>
+                  <button style="{{ ghostBtn }}">+ new</button>
+                </div>
+                <sc-for list="{{ portfolios }}" as="p" hint-placeholder-count="3">
+                  <button onClick="{{ p.onClick }}" style="{{ p.style }}">
+                    <div style="display:flex; flex-direction:column; gap:2px; text-align:left;">
+                      <span style="font-weight:600; font-size:13px;">{{ p.name }}</span>
+                      <span style="font-size:11px; color:var(--faint);">{{ p.meta }}</span>
+                    </div>
+                    <span style="{{ p.retStyle }}">{{ p.ret }}</span>
+                  </button>
+                </sc-for>
+              </div>
+
+              <div style="background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:14px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:11px;">
+                  <span style="font-size:11px; font-weight:600; letter-spacing:0.4px; color:var(--dim); text-transform:uppercase;">Allocations</span>
+                  <span style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--faint);">{{ allocCount }} pairs · 1 pool</span>
+                </div>
+                <sc-for list="{{ allocations }}" as="a" hint-placeholder-count="4">
+                  <div style="display:flex; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid var(--border);">
+                    <span style="{{ a.coinStyle }}">{{ a.coin }}</span>
+                    <div style="flex:1; min-width:0;">
+                      <div style="font-weight:600; font-size:12.5px;">{{ a.symbol }}</div>
+                      <div style="font-size:11px; color:var(--faint);">{{ a.strategy }}</div>
+                    </div>
+                    <div style="width:84px;">
+                      <div style="height:5px; border-radius:3px; background:var(--surface2); overflow:hidden;"><span style="{{ a.barStyle }}"></span></div>
+                      <div style="font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--dim); margin-top:3px; text-align:right;">{{ a.weight }}</div>
+                    </div>
+                  </div>
+                </sc-for>
+                <div style="display:flex; gap:8px; margin-top:13px;">
+                  <button onClick="{{ runPortfolio }}" style="{{ primaryBtn }}">Run backtest</button>
+                  <button style="{{ secondaryBtn }}">Edit YAML</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- right: metrics + chart + breakdown -->
+            <div style="display:flex; flex-direction:column; gap:16px; min-width:0;">
+              <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px;">
+                <sc-for list="{{ pfMetrics }}" as="m" hint-placeholder-count="4">
+                  <div style="background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:13px 14px;">
+                    <div style="font-size:10.5px; color:var(--faint); text-transform:uppercase; letter-spacing:0.5px;">{{ m.label }}</div>
+                    <div style="{{ m.valueStyle }}">{{ m.value }}</div>
+                    <div style="font-size:11px; color:var(--faint); margin-top:2px;">{{ m.sub }}</div>
+                  </div>
+                </sc-for>
+              </div>
+
+              <div style="background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:15px 16px;">
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+                  <span style="font-size:12.5px; font-weight:600;">Aggregate equity curve</span>
+                  <div style="display:flex; gap:4px;">
+                    <sc-for list="{{ rangeBtns }}" as="r" hint-placeholder-count="4">
+                      <button onClick="{{ r.onClick }}" style="{{ r.style }}">{{ r.label }}</button>
+                    </sc-for>
+                  </div>
+                </div>
+                <div style="position:relative; height:264px;">
+                  <canvas id="ck-eq" style="width:100%; height:100%; display:block;"></canvas>
+                  <div onMouseMove="{{ eqHover }}" onMouseLeave="{{ eqLeave }}" style="position:absolute; inset:0; cursor:crosshair;"></div>
+                  <div style="{{ eqTipStyle }}">
+                    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--faint);">{{ eqTipDate }}</div>
+                    <div style="font-family:'IBM Plex Mono',monospace; font-size:14px; font-weight:600;">€{{ eqTipVal }}</div>
+                    <div style="{{ eqTipDeltaStyle }}">{{ eqTipDelta }}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div style="background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:15px 16px;">
+                <div style="font-size:12.5px; font-weight:600; margin-bottom:10px;">Per-allocation breakdown</div>
+                <table style="width:100%; border-collapse:collapse; font-size:12px;">
+                  <thead><tr style="color:var(--faint); font-size:10.5px; text-transform:uppercase; letter-spacing:0.5px;">
+                    <th style="text-align:left; padding:0 0 8px; font-weight:500;">Symbol</th>
+                    <th style="text-align:left; padding:0 0 8px; font-weight:500;">Strategy</th>
+                    <th style="text-align:right; padding:0 0 8px; font-weight:500;">Trades</th>
+                    <th style="text-align:right; padding:0 0 8px; font-weight:500;">Win %</th>
+                    <th style="text-align:right; padding:0 0 8px; font-weight:500;">Realised P&L</th>
+                  </tr></thead>
+                  <tbody>
+                    <sc-for list="{{ breakdown }}" as="b" hint-placeholder-count="4">
+                      <tr style="border-top:1px solid var(--border);">
+                        <td style="padding:9px 0; font-weight:600;">{{ b.symbol }}</td>
+                        <td style="padding:9px 0; color:var(--dim);">{{ b.strategy }}</td>
+                        <td style="padding:9px 0; text-align:right; font-family:'IBM Plex Mono',monospace;">{{ b.trades }}</td>
+                        <td style="padding:9px 0; text-align:right; font-family:'IBM Plex Mono',monospace; color:var(--dim);">{{ b.win }}</td>
+                        <td style="padding:9px 0; text-align:right; font-family:'IBM Plex Mono',monospace; font-weight:600;"><span style="{{ b.pnlStyle }}">{{ b.pnl }}</span></td>
+                      </tr>
+                    </sc-for>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- ===== LIVE ===== -->
+        <sc-if value="{{ isLive }}" hint-placeholder-val="{{ true }}">
+          <div style="animation:ck-fadein 0.25s;">
+            <div style="{{ liveCalloutStyle }}">
+              <span style="{{ liveCalloutDot }}"></span>
+              <div style="flex:1;">
+                <div style="font-weight:700; font-size:13.5px;">{{ liveCalloutTitle }}</div>
+                <div style="font-size:12px; opacity:0.85; margin-top:2px;">{{ liveCalloutSub }}</div>
+              </div>
+              <button onClick="{{ toggleLiveMode }}" style="{{ liveModeBtnStyle }}">{{ liveModeBtnText }}</button>
+            </div>
+
+            <div style="display:grid; grid-template-columns:1fr 320px; gap:20px; margin-top:18px;">
+              <div style="display:flex; flex-direction:column; gap:16px; min-width:0;">
+                <div style="background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:15px 16px;">
+                  <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+                    <div style="display:flex; align-items:center; gap:9px;">
+                      <span style="font-size:13px; font-weight:600;">BTC-EUR</span>
+                      <span style="font-family:'IBM Plex Mono',monospace; font-size:13px; color:var(--pos);">€58,412.20</span>
+                      <span style="font-size:11px; color:var(--pos);">+1.84%</span>
+                    </div>
+                    <span style="font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--faint); border:1px solid var(--border); border-radius:4px; padding:1px 6px;">1h · live feed</span>
+                  </div>
+                  <div style="position:relative; height:284px;">
+                    <canvas id="ck-px" style="width:100%; height:100%; display:block;"></canvas>
+                    <div onMouseMove="{{ pxHover }}" onMouseLeave="{{ pxLeave }}" style="position:absolute; inset:0; cursor:crosshair;"></div>
+                    <div style="{{ pxTipStyle }}">
+                      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--faint);">{{ pxTipDate }}</div>
+                      <div style="font-family:'IBM Plex Mono',monospace; font-size:12px;">O {{ pxTipO }} · C {{ pxTipC }}</div>
+                      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--faint);">H {{ pxTipH }} · L {{ pxTipL }}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div style="background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:15px 16px;">
+                  <div style="font-size:12.5px; font-weight:600; margin-bottom:11px;">Loop activity</div>
+                  <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px;">
+                    <sc-for list="{{ liveStats }}" as="s" hint-placeholder-count="4">
+                      <div>
+                        <div style="font-size:10.5px; color:var(--faint); text-transform:uppercase; letter-spacing:0.5px;">{{ s.label }}</div>
+                        <div style="font-family:'IBM Plex Mono',monospace; font-size:18px; font-weight:600; margin-top:3px;">{{ s.value }}</div>
+                      </div>
+                    </sc-for>
+                  </div>
+                </div>
+              </div>
+
+              <!-- live control panel -->
+              <div style="display:flex; flex-direction:column; gap:14px;">
+                <div style="background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:15px;">
+                  <div style="font-size:11px; font-weight:600; letter-spacing:0.4px; color:var(--dim); text-transform:uppercase; margin-bottom:12px;">Loop configuration</div>
+                  <div style="display:flex; flex-direction:column; gap:11px;">
+                    <div>
+                      <label style="{{ fieldLabel }}">Strategy</label>
+                      <div style="{{ fakeSelect }}">trend_following <span style="color:var(--faint);">▾</span></div>
+                    </div>
+                    <div>
+                      <label style="{{ fieldLabel }}">Dataset</label>
+                      <div style="{{ fakeSelect }}">BTC-EUR @ 1h <span style="color:var(--faint);">▾</span></div>
+                    </div>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                      <div>
+                        <label style="{{ fieldLabel }}">Interval</label>
+                        <div style="{{ fakeInput }}">60s</div>
+                      </div>
+                      <div>
+                        <label style="{{ fieldLabel }}">Paper balance</label>
+                        <div style="{{ fakeInput }}">€10,000</div>
+                      </div>
+                    </div>
+                    <details style="margin-top:2px;">
+                      <summary style="font-size:11.5px; color:var(--accent); cursor:pointer; list-style:none;">Advanced · risk &amp; notifications</summary>
+                      <div style="display:flex; flex-direction:column; gap:9px; margin-top:11px; padding-top:11px; border-top:1px solid var(--border);">
+                        <div style="display:flex; justify-content:space-between; align-items:center; font-size:12px;"><span style="color:var(--dim);">Max position size</span><span style="font-family:'IBM Plex Mono',monospace;">25%</span></div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; font-size:12px;"><span style="color:var(--dim);">Circuit breaker</span><span style="font-family:'IBM Plex Mono',monospace;">−15% DD</span></div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; font-size:12px;"><span style="color:var(--dim);">Discord heartbeat</span><span style="color:var(--pos); font-weight:600;">on · 15m</span></div>
+                      </div>
+                    </details>
+                  </div>
+                  <button onClick="{{ toggleLoop }}" style="{{ loopBtnStyle }}">{{ loopBtnText }}</button>
+                  <div style="display:flex; gap:8px; margin-top:8px;">
+                    <button style="{{ tinyBtn }}">Test connection</button>
+                    <button style="{{ tinyBtn }}">Pre-flight</button>
+                  </div>
+                </div>
+
+                <div style="background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:15px;">
+                  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <span style="font-size:11px; font-weight:600; letter-spacing:0.4px; color:var(--dim); text-transform:uppercase;">Loop status</span>
+                    <span style="{{ loopStatusPill }}">{{ loopStatusText }}</span>
+                  </div>
+                  <sc-for list="{{ loopRows }}" as="r" hint-placeholder-count="5">
+                    <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--border); font-size:12px;">
+                      <span style="color:var(--faint);">{{ r.k }}</span>
+                      <span style="font-family:'IBM Plex Mono',monospace; color:var(--text);">{{ r.v }}</span>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- ===== DASHBOARD ===== -->
+        <sc-if value="{{ isDashboard }}" hint-placeholder-val="{{ true }}">
+          <div style="animation:ck-fadein 0.25s; display:flex; flex-direction:column; gap:16px;">
+            <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px;">
+              <sc-for list="{{ dashMetrics }}" as="m" hint-placeholder-count="4">
+                <div style="background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:15px 16px;">
+                  <div style="font-size:10.5px; color:var(--faint); text-transform:uppercase; letter-spacing:0.5px;">{{ m.label }}</div>
+                  <div style="{{ m.valueStyle }}">{{ m.value }}</div>
+                  <div style="font-size:11px; color:var(--faint); margin-top:3px;">{{ m.sub }}</div>
+                </div>
+              </sc-for>
+            </div>
+            <div style="background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:15px 16px;">
+              <div style="font-size:12.5px; font-weight:600; margin-bottom:10px;">Open positions</div>
+              <table style="width:100%; border-collapse:collapse; font-size:12px;">
+                <thead><tr style="color:var(--faint); font-size:10.5px; text-transform:uppercase; letter-spacing:0.5px;">
+                  <th style="text-align:left; padding:0 0 8px; font-weight:500;">Symbol</th><th style="text-align:left; padding:0 0 8px; font-weight:500;">Side</th>
+                  <th style="text-align:right; padding:0 0 8px; font-weight:500;">Qty</th><th style="text-align:right; padding:0 0 8px; font-weight:500;">Entry</th>
+                  <th style="text-align:right; padding:0 0 8px; font-weight:500;">Mark</th><th style="text-align:right; padding:0 0 8px; font-weight:500;">Unreal. P&L</th>
+                </tr></thead>
+                <tbody>
+                  <sc-for list="{{ positions }}" as="p" hint-placeholder-count="3">
+                    <tr style="border-top:1px solid var(--border);">
+                      <td style="padding:9px 0; font-weight:600;">{{ p.symbol }}</td>
+                      <td style="padding:9px 0;"><span style="{{ p.sideStyle }}">{{ p.side }}</span></td>
+                      <td style="padding:9px 0; text-align:right; font-family:'IBM Plex Mono',monospace;">{{ p.qty }}</td>
+                      <td style="padding:9px 0; text-align:right; font-family:'IBM Plex Mono',monospace; color:var(--dim);">{{ p.entry }}</td>
+                      <td style="padding:9px 0; text-align:right; font-family:'IBM Plex Mono',monospace; color:var(--dim);">{{ p.mark }}</td>
+                      <td style="padding:9px 0; text-align:right; font-family:'IBM Plex Mono',monospace; font-weight:600;"><span style="{{ p.pnlStyle }}">{{ p.pnl }}</span></td>
+                    </tr>
+                  </sc-for>
+                </tbody>
+              </table>
+            </div>
+            <div style="background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:15px 16px;">
+              <div style="font-size:12.5px; font-weight:600; margin-bottom:10px;">Recent orders</div>
+              <table style="width:100%; border-collapse:collapse; font-size:12px;">
+                <thead><tr style="color:var(--faint); font-size:10.5px; text-transform:uppercase; letter-spacing:0.5px;">
+                  <th style="text-align:left; padding:0 0 8px; font-weight:500;">Time</th><th style="text-align:left; padding:0 0 8px; font-weight:500;">Symbol</th>
+                  <th style="text-align:left; padding:0 0 8px; font-weight:500;">Side</th><th style="text-align:left; padding:0 0 8px; font-weight:500;">Type</th>
+                  <th style="text-align:right; padding:0 0 8px; font-weight:500;">Qty</th><th style="text-align:right; padding:0 0 8px; font-weight:500;">Price</th>
+                  <th style="text-align:right; padding:0 0 8px; font-weight:500;">Status</th>
+                </tr></thead>
+                <tbody>
+                  <sc-for list="{{ orders }}" as="o" hint-placeholder-count="4">
+                    <tr style="border-top:1px solid var(--border);">
+                      <td style="padding:9px 0; font-family:'IBM Plex Mono',monospace; color:var(--dim);">{{ o.time }}</td>
+                      <td style="padding:9px 0; font-weight:600;">{{ o.symbol }}</td>
+                      <td style="padding:9px 0;"><span style="{{ o.sideStyle }}">{{ o.side }}</span></td>
+                      <td style="padding:9px 0; color:var(--dim);">{{ o.type }}</td>
+                      <td style="padding:9px 0; text-align:right; font-family:'IBM Plex Mono',monospace;">{{ o.qty }}</td>
+                      <td style="padding:9px 0; text-align:right; font-family:'IBM Plex Mono',monospace; color:var(--dim);">{{ o.price }}</td>
+                      <td style="padding:9px 0; text-align:right;"><span style="{{ o.statusStyle }}">{{ o.status }}</span></td>
+                    </tr>
+                  </sc-for>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- ===== BACKTEST ===== -->
+        <sc-if value="{{ isBacktest }}" hint-placeholder-val="{{ true }}">
+          <div style="animation:ck-fadein 0.25s; display:grid; grid-template-columns:300px 1fr; gap:20px;">
+            <div style="background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:15px; display:flex; flex-direction:column; gap:11px;">
+              <div style="font-size:11px; font-weight:600; letter-spacing:0.4px; color:var(--dim); text-transform:uppercase;">Run a backtest</div>
+              <div><label style="{{ fieldLabel }}">Strategy</label><div style="{{ fakeSelect }}">mean_reversion <span style="color:var(--faint);">▾</span></div></div>
+              <div><label style="{{ fieldLabel }}">Dataset</label><div style="{{ fakeSelect }}">ETH-EUR @ 1h · 8,023 candles <span style="color:var(--faint);">▾</span></div></div>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                <div><label style="{{ fieldLabel }}">Start</label><div style="{{ fakeInput }}">2024-01-01</div></div>
+                <div><label style="{{ fieldLabel }}">Capital</label><div style="{{ fakeInput }}">€10,000</div></div>
+              </div>
+              <details><summary style="font-size:11.5px; color:var(--accent); cursor:pointer; list-style:none;">Strategy parameters</summary>
+                <div style="display:flex; flex-direction:column; gap:9px; margin-top:11px; padding-top:11px; border-top:1px solid var(--border);">
+                  <div style="display:flex; justify-content:space-between; font-size:12px;"><span style="color:var(--dim);">Lookback</span><span style="font-family:'IBM Plex Mono',monospace;">20</span></div>
+                  <div style="display:flex; justify-content:space-between; font-size:12px;"><span style="color:var(--dim);">Z entry</span><span style="font-family:'IBM Plex Mono',monospace;">2.0</span></div>
+                  <div style="display:flex; justify-content:space-between; font-size:12px;"><span style="color:var(--dim);">Z exit</span><span style="font-family:'IBM Plex Mono',monospace;">0.5</span></div>
+                </div>
+              </details>
+              <details><summary style="font-size:11.5px; color:var(--accent); cursor:pointer; list-style:none;">Auto-tuning · grid / Optuna TPE</summary>
+                <div style="font-size:11.5px; color:var(--faint); margin-top:9px; line-height:1.5;">Sweep parameters and maximise an objective (return, Sharpe, …). Collapsed by default — defaults run fine without it.</div>
+              </details>
+              <button onClick="{{ runBacktest }}" style="{{ primaryBtn }}">Run backtest</button>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:16px; min-width:0;">
+              <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px;">
+                <sc-for list="{{ btMetrics }}" as="m" hint-placeholder-count="4">
+                  <div style="background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:13px 14px;">
+                    <div style="font-size:10.5px; color:var(--faint); text-transform:uppercase; letter-spacing:0.5px;">{{ m.label }}</div>
+                    <div style="{{ m.valueStyle }}">{{ m.value }}</div>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:15px 16px;">
+                <div style="font-size:12.5px; font-weight:600; margin-bottom:6px;">Equity curve</div>
+                <div style="position:relative; height:248px;">
+                  <canvas id="ck-eq" style="width:100%; height:100%; display:block;"></canvas>
+                  <div onMouseMove="{{ eqHover }}" onMouseLeave="{{ eqLeave }}" style="position:absolute; inset:0; cursor:crosshair;"></div>
+                  <div style="{{ eqTipStyle }}">
+                    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--faint);">{{ eqTipDate }}</div>
+                    <div style="font-family:'IBM Plex Mono',monospace; font-size:14px; font-weight:600;">€{{ eqTipVal }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- ===== SUGGEST ===== -->
+        <sc-if value="{{ isSuggest }}" hint-placeholder-val="{{ true }}">
+          <div style="animation:ck-fadein 0.25s; max-width:680px;">
+            <div style="background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:18px;">
+              <div style="display:flex; gap:11px; align-items:flex-end; flex-wrap:wrap;">
+                <div style="flex:1; min-width:160px;"><label style="{{ fieldLabel }}">Strategy</label><div style="{{ fakeSelect }}">trend_following <span style="color:var(--faint);">▾</span></div></div>
+                <div style="flex:1; min-width:160px;"><label style="{{ fieldLabel }}">Dataset</label><div style="{{ fakeSelect }}">SOL-EUR @ 1h <span style="color:var(--faint);">▾</span></div></div>
+                <button onClick="{{ runSuggest }}" style="{{ primaryBtn }}">Suggest</button>
+              </div>
+              <div style="font-size:11.5px; color:var(--faint); margin-top:11px;">One-shot suggestion from the latest stored candle. No order is placed.</div>
+            </div>
+            <div style="background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:18px; margin-top:16px;">
+              <div style="display:flex; align-items:center; gap:11px; margin-bottom:14px;">
+                <span style="font-size:24px; font-weight:700; font-family:'IBM Plex Mono',monospace; color:var(--pos);">BUY</span>
+                <span style="font-size:12px; color:var(--faint); border:1px solid var(--border); border-radius:5px; padding:2px 8px;">strength: STRONG</span>
+              </div>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px 24px;">
+                <sc-for list="{{ suggestRows }}" as="s" hint-placeholder-count="6">
+                  <div style="display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px solid var(--border); font-size:12px;">
+                    <span style="color:var(--faint);">{{ s.k }}</span>
+                    <span style="font-family:'IBM Plex Mono',monospace;">{{ s.v }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- ===== DATA ===== -->
+        <sc-if value="{{ isData }}" hint-placeholder-val="{{ true }}">
+          <div style="animation:ck-fadein 0.25s; display:flex; flex-direction:column; gap:16px;">
+            <div style="display:flex; gap:11px; align-items:flex-end; background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:15px; flex-wrap:wrap;">
+              <div style="flex:1; min-width:130px;"><label style="{{ fieldLabel }}">Symbol</label><div style="{{ fakeSelect }}">BTC-EUR <span style="color:var(--faint);">▾</span></div></div>
+              <div style="min-width:90px;"><label style="{{ fieldLabel }}">Timeframe</label><div style="{{ fakeSelect }}">1h <span style="color:var(--faint);">▾</span></div></div>
+              <div style="min-width:120px;"><label style="{{ fieldLabel }}">Start</label><div style="{{ fakeInput }}">2024-01-01</div></div>
+              <button onClick="{{ runBackfill }}" style="{{ primaryBtn }}">Backfill</button>
+            </div>
+            <div style="background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:15px 16px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                <span style="font-size:12.5px; font-weight:600;">Stored datasets</span>
+                <span style="font-size:11px; color:var(--faint);">auto-refreshed on startup · sqlite 184.2 MB</span>
+              </div>
+              <table style="width:100%; border-collapse:collapse; font-size:12px;">
+                <thead><tr style="color:var(--faint); font-size:10.5px; text-transform:uppercase; letter-spacing:0.5px;">
+                  <th style="text-align:left; padding:0 0 8px; font-weight:500;">Symbol</th><th style="text-align:left; padding:0 0 8px; font-weight:500;">TF</th>
+                  <th style="text-align:right; padding:0 0 8px; font-weight:500;">Candles</th><th style="text-align:left; padding:0 0 8px; font-weight:500;">Range</th><th></th>
+                </tr></thead>
+                <tbody>
+                  <sc-for list="{{ datasets }}" as="d" hint-placeholder-count="5">
+                    <tr style="border-top:1px solid var(--border);">
+                      <td style="padding:9px 0; font-weight:600;">{{ d.symbol }}</td>
+                      <td style="padding:9px 0; font-family:'IBM Plex Mono',monospace; color:var(--dim);">{{ d.tf }}</td>
+                      <td style="padding:9px 0; text-align:right; font-family:'IBM Plex Mono',monospace;">{{ d.candles }}</td>
+                      <td style="padding:9px 0; font-family:'IBM Plex Mono',monospace; color:var(--faint);">{{ d.range }}</td>
+                      <td style="padding:9px 0; text-align:right;"><span style="color:var(--faint); font-size:11px;">{{ d.fresh }}</span></td>
+                    </tr>
+                  </sc-for>
+                </tbody>
+              </table>
+              <div style="font-size:11.5px; color:var(--faint); margin-top:12px; line-height:1.5;">Short timeframes (1m–15m) are retained by Revolut X for a limited window. Maintenance tools (wipe, reset, checkpoint) live behind <span style="color:var(--accent);">Advanced</span> — they're rarely needed.</div>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- ===== SETTINGS ===== -->
+        <sc-if value="{{ isSettings }}" hint-placeholder-val="{{ true }}">
+          <div style="animation:ck-fadein 0.25s; max-width:720px; display:flex; flex-direction:column; gap:16px;">
+            <div style="background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:16px;">
+              <div style="font-size:12.5px; font-weight:600; margin-bottom:12px;">Revolut X connection</div>
+              <sc-for list="{{ settingsConn }}" as="s" hint-placeholder-count="3">
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:9px 0; border-bottom:1px solid var(--border); font-size:12.5px;">
+                  <span style="color:var(--dim);">{{ s.k }}</span>
+                  <span style="{{ s.vStyle }}">{{ s.v }}</span>
+                </div>
+              </sc-for>
+            </div>
+            <div style="background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:16px;">
+              <div style="font-size:12.5px; font-weight:600; margin-bottom:4px;">Risk defaults</div>
+              <div style="font-size:11.5px; color:var(--faint); margin-bottom:12px;">Applied to every backtest, paper, and live run unless overridden per-strategy.</div>
+              <sc-for list="{{ settingsRisk }}" as="s" hint-placeholder-count="4">
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:9px 0; border-bottom:1px solid var(--border); font-size:12.5px;">
+                  <span style="color:var(--dim);">{{ s.k }}</span>
+                  <span style="font-family:'IBM Plex Mono',monospace;">{{ s.v }}</span>
+                </div>
+              </sc-for>
+            </div>
+            <div style="background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:16px;">
+              <div style="font-size:12.5px; font-weight:600; margin-bottom:12px;">Appearance</div>
+              <div style="display:flex; gap:10px;">
+                <sc-for list="{{ themeCards }}" as="t" hint-placeholder-count="3">
+                  <button onClick="{{ t.onClick }}" style="{{ t.style }}">
+                    <div style="display:flex; gap:4px; margin-bottom:8px;">
+                      <span style="width:16px; height:16px; border-radius:4px; background:{{ t.c1 }};"></span>
+                      <span style="width:16px; height:16px; border-radius:4px; background:{{ t.c2 }};"></span>
+                      <span style="width:16px; height:16px; border-radius:4px; background:{{ t.c3 }};"></span>
+                    </div>
+                    <div style="font-weight:600; font-size:12.5px;">{{ t.name }}</div>
+                    <div style="font-size:11px; color:var(--faint);">{{ t.desc }}</div>
+                  </button>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+      </div>
+    </main>
+
+    <!-- STATUS RAIL -->
+    <aside style="border-left:1px solid var(--border); background:var(--surface); overflow-y:auto; padding:16px 15px; display:flex; flex-direction:column; gap:16px;">
+      <div>
+        <div style="font-size:10px; font-weight:600; letter-spacing:1px; color:var(--faint); text-transform:uppercase; margin-bottom:9px;">Live loop</div>
+        <div style="{{ railLoopStyle }}">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="{{ railLoopDot }}"></span>
+            <span style="font-weight:600; font-size:13px;">{{ railLoopState }}</span>
+          </div>
+          <div style="font-size:11px; color:var(--dim); margin-top:5px;">{{ railLoopSub }}</div>
+        </div>
+      </div>
+
+      <div>
+        <div style="font-size:10px; font-weight:600; letter-spacing:1px; color:var(--faint); text-transform:uppercase; margin-bottom:9px;">Today</div>
+        <div style="display:flex; flex-direction:column; gap:9px;">
+          <div style="display:flex; justify-content:space-between; align-items:baseline;">
+            <span style="font-size:12px; color:var(--dim);">Unrealised P&L</span>
+            <span style="font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:15px; color:var(--pos);">+€428.10</span>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:baseline;">
+            <span style="font-size:12px; color:var(--dim);">Realised today</span>
+            <span style="font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:13px; color:var(--pos);">+€112.40</span>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:baseline;">
+            <span style="font-size:12px; color:var(--dim);">Open positions</span>
+            <span style="font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:13px;">3</span>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div style="font-size:10px; font-weight:600; letter-spacing:1px; color:var(--faint); text-transform:uppercase; margin-bottom:9px;">Positions</div>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          <sc-for list="{{ railPositions }}" as="p" hint-placeholder-count="3">
+            <div style="display:flex; align-items:center; gap:9px; padding:8px 9px; background:var(--bg); border:1px solid var(--border); border-radius:8px;">
+              <span style="{{ p.coinStyle }}">{{ p.coin }}</span>
+              <div style="flex:1; min-width:0;">
+                <div style="font-weight:600; font-size:12px;">{{ p.symbol }}</div>
+                <div style="font-size:10.5px; color:var(--faint);">{{ p.qty }}</div>
+              </div>
+              <span style="{{ p.pnlStyle }}">{{ p.pnl }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <div>
+        <div style="font-size:10px; font-weight:600; letter-spacing:1px; color:var(--faint); text-transform:uppercase; margin-bottom:9px;">Watchlist</div>
+        <div style="display:flex; flex-direction:column; gap:2px;">
+          <sc-for list="{{ watchlist }}" as="w" hint-placeholder-count="4">
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:6px 4px;">
+              <span style="font-weight:600; font-size:12px;">{{ w.symbol }}</span>
+              <div style="display:flex; align-items:center; gap:9px;">
+                <span style="font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--dim);">{{ w.price }}</span>
+                <span style="{{ w.chgStyle }}">{{ w.chg }}</span>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ============ DOCKED TERMINAL ============ -->
+  <section style="{{ termWrapStyle }}">
+    <div style="display:flex; align-items:center; gap:12px; height:34px; padding:0 14px; border-top:1px solid var(--border); background:var(--surface); flex:none;">
+      <button onClick="{{ toggleTerm }}" style="display:flex; align-items:center; gap:7px; background:none; border:none; color:var(--text); cursor:pointer; padding:0; font-family:inherit;">
+        <span style="{{ termCaretStyle }}">▸</span>
+        <span style="font-size:11.5px; font-weight:600;">Terminal</span>
+      </button>
+      <span style="width:6px; height:6px; border-radius:50%; background:var(--accent); animation:ck-blink 1.4s infinite;"></span>
+      <span style="font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--faint);">{{ termCount }} events · streaming</span>
+      <div style="flex:1;"></div>
+      <div style="display:flex; gap:3px;">
+        <sc-for list="{{ termFilters }}" as="f" hint-placeholder-count="5">
+          <button onClick="{{ f.onClick }}" style="{{ f.style }}">{{ f.label }}</button>
+        </sc-for>
+      </div>
+      <button onClick="{{ clearTerm }}" style="background:none; border:none; color:var(--faint); cursor:pointer; font-size:11px; font-family:inherit; padding:3px 6px;">clear</button>
+    </div>
+    <div id="ck-term" style="{{ termBodyStyle }}">
+      <sc-for list="{{ termLines }}" as="l" hint-placeholder-count="8">
+        <div style="display:flex; gap:10px; padding:1.5px 0; line-height:1.5;">
+          <span style="color:var(--faint); flex:none;">{{ l.tm }}</span>
+          <span style="{{ l.tagStyle }}">{{ l.src }}</span>
+          <span style="{{ l.msgStyle }}">{{ l.msg }}</span>
+        </div>
+      </sc-for>
+      <div style="display:flex; gap:8px; padding:2px 0; color:var(--accent);">
+        <span>›</span><span style="width:7px; height:14px; background:var(--accent); display:inline-block; animation:ck-blink 1s infinite;"></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CONFIRM DIALOG ============ -->
+  <sc-if value="{{ confirmOpen }}" hint-placeholder-val="{{ false }}">
+    <div style="position:fixed; inset:0; background:rgba(0,0,0,0.62); display:flex; align-items:center; justify-content:center; z-index:100; animation:ck-fadein 0.15s;">
+      <div style="background:var(--surface); border:1px solid var(--live); border-radius:14px; padding:24px; width:440px; box-shadow:0 24px 60px rgba(0,0,0,0.5);">
+        <div style="display:flex; align-items:center; gap:11px; margin-bottom:13px;">
+          <span style="width:34px; height:34px; border-radius:9px; background:var(--live); display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700; font-size:18px; font-family:'IBM Plex Mono',monospace;">!</span>
+          <span style="font-weight:700; font-size:16px;">{{ confirmTitle }}</span>
+        </div>
+        <div style="font-size:13px; color:var(--dim); line-height:1.55; margin-bottom:20px;">{{ confirmBody }}</div>
+        <div style="display:flex; gap:10px; justify-content:flex-end;">
+          <button onClick="{{ confirmNo }}" style="{{ secondaryBtn }}">Cancel</button>
+          <button onClick="{{ confirmYes }}" style="background:var(--live); color:#fff; border:none; border-radius:8px; padding:9px 18px; font-weight:600; font-size:13px; cursor:pointer; font-family:inherit;">{{ confirmYesText }}</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:&quot;100%&quot;,&quot;height&quot;:&quot;100%&quot;}}">
+class Component extends DCLogic {
+  state = {
+    screen: 'portfolio',
+    theme: 'carbon',
+    mode: 'paper',
+    termOpen: true,
+    termFilter: 'all',
+    liveRunning: false,
+    liveMode: 'paper',
+    range: '3M',
+    confirm: null,
+    eqHover: null,
+    pxHover: null,
+    log: [
+      { tm: '09:14:02', src: 'sys', lvl: 'ok', msg: 'boot: sqlite `/data/cryptrink.db` is 184.20 MB' },
+      { tm: '09:14:02', src: 'data', lvl: 'info', msg: 'auto-sync: 6 (symbol, timeframe) datasets loaded' },
+      { tm: '09:14:03', src: 'sys', lvl: 'ok', msg: 'revolutx: connected · /configuration/pairs → 38 symbols' },
+      { tm: '09:14:03', src: 'sys', lvl: 'info', msg: 'auto-sync: symbol vocabulary refreshed on startup' },
+      { tm: '09:14:09', src: 'portfolio', lvl: 'info', msg: 'loaded `Balanced Majors` — 4 allocations, €25,000 pool' },
+      { tm: '09:14:21', src: 'backtest', lvl: 'ok', msg: 'replay finished in 1.84s · 142 trades · +18.42%' },
+      { tm: '09:15:02', src: 'live', lvl: 'warn', msg: 'paper loop idle — press Start to begin trading' },
+    ],
+  };
+
+  THEMES = {
+    carbon: { '--bg':'#14171c','--surface':'#1b1f25','--surface2':'#232830','--border':'#2e343d','--text':'#e7e9ec','--dim':'#9aa1ab','--faint':'#6b7280','--accent':'#3fd9a8','--accent-dim':'#1f6b56','--accent-soft':'#16302a','--pos':'#3fd98a','--neg':'#f0616d','--paper':'#f0b54a','--live':'#ef4658','--live-glow':'rgba(239,70,88,0.5)','--shadow':'rgba(0,0,0,0.4)' },
+    slate: { '--bg':'#1a1d27','--surface':'#222634','--surface2':'#2a2f40','--border':'#363c50','--text':'#e6e8f0','--dim':'#9ca3b8','--faint':'#6b7186','--accent':'#8b8cf0','--accent-dim':'#3a3a6b','--accent-soft':'#23244a','--pos':'#5ad1a0','--neg':'#f07089','--paper':'#e0b24a','--live':'#f0526f','--live-glow':'rgba(240,82,111,0.5)','--shadow':'rgba(0,0,0,0.45)' },
+    daylight: { '--bg':'#f4f3ef','--surface':'#ffffff','--surface2':'#faf9f6','--border':'#e4e2da','--text':'#1c1f24','--dim':'#5b626c','--faint':'#9aa0a8','--accent':'#0f9d76','--accent-dim':'#bfe9da','--accent-soft':'#e7f6f0','--pos':'#0f9d76','--neg':'#d63d4e','--paper':'#b9810f','--live':'#d63d4e','--live-glow':'rgba(214,61,78,0.35)','--shadow':'rgba(20,23,28,0.08)' },
+  };
+
+  // ---- mock data ----
+  equity = (() => { const a=[]; let v=25000; const d=new Date('2024-01-01'); for(let i=0;i<90;i++){ v *= 1 + (Math.sin(i/7)*0.006) + (Math.random()-0.42)*0.012; const dt=new Date(d); dt.setDate(d.getDate()+i*3); a.push({ v, label: dt.toISOString().slice(0,10) }); } return a; })();
+  btEquity = (() => { const a=[]; let v=10000; const d=new Date('2024-01-01'); for(let i=0;i<90;i++){ v *= 1 + (Math.cos(i/9)*0.005) + (Math.random()-0.40)*0.014; const dt=new Date(d); dt.setDate(d.getDate()+i*3); a.push({ v, label: dt.toISOString().slice(0,10) }); } return a; })();
+  candles = (() => { const a=[]; let c=57200; const base=new Date('2026-06-20T00:00:00'); for(let i=0;i<54;i++){ const o=c; const drift=(Math.sin(i/5)*0.004)+(Math.random()-0.46)*0.012; c=o*(1+drift); const hi=Math.max(o,c)*(1+Math.random()*0.006); const lo=Math.min(o,c)*(1-Math.random()*0.006); const dt=new Date(base.getTime()+i*3600000); a.push({ o,h:hi,l:lo,c, label: dt.toISOString().slice(5,16).replace('T',' ') }); } return a; })();
+
+  ensureInit() {
+    if (this._inited) return;
+    this._inited = true;
+    this._draw = () => { try { this.drawEquity(); this.drawPx(); } catch (e) {} };
+    this.applyTheme(this.state.theme);
+    [50, 180, 420].forEach(t => setTimeout(this._draw, t));
+    this._tick = setInterval(() => {
+      this._draw();
+      const tb = document.getElementById('ck-term');
+      if (tb && this._logLen !== this.state.log.length) { this._logLen = this.state.log.length; tb.scrollTop = tb.scrollHeight; }
+    }, 450);
+  }
+  componentWillUnmount() { if (this._tick) clearInterval(this._tick); }
+
+  applyTheme(name) {
+    const el = document.getElementById('ck-root'); if (!el) return;
+    const vars = this.THEMES[name] || this.THEMES.carbon;
+    Object.keys(vars).forEach(k => el.style.setProperty(k, vars[k]));
+  }
+  cssVar(name) {
+    const el = document.getElementById('ck-root'); if (!el) return '#000';
+    return getComputedStyle(el).getPropertyValue(name).trim() || (this.THEMES[this.state.theme]||{})[name] || '#000';
+  }
+
+  setupCanvas(cv) {
+    if (!cv) return null;
+    const r = cv.getBoundingClientRect(); if (r.width < 2 || r.height < 2) return null;
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = r.width * dpr; cv.height = r.height * dpr;
+    const ctx = cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
+    return { ctx, w: r.width, h: r.height };
+  }
+
+  drawEquity() {
+    const c = this.setupCanvas(document.getElementById('ck-eq')); if (!c) return;
+    const { ctx, w, h } = c;
+    const data = this.state.screen === 'backtest' ? this.btEquity : this.equity;
+    ctx.clearRect(0,0,w,h);
+    const pad = { l: 8, r: 8, t: 12, b: 18 };
+    const vals = data.map(d => d.v);
+    const min = Math.min(...vals), max = Math.max(...vals), span = (max-min)||1;
+    const x = i => pad.l + (i/(data.length-1))*(w-pad.l-pad.r);
+    const y = v => pad.t + (1-(v-min)/span)*(h-pad.t-pad.b);
+    const accent = this.cssVar('--accent'), border = this.cssVar('--border'), faint = this.cssVar('--faint');
+    ctx.strokeStyle = border; ctx.lineWidth = 1; ctx.globalAlpha = 0.5;
+    for (let g=0; g<=3; g++){ const yy = pad.t + g/3*(h-pad.t-pad.b); ctx.beginPath(); ctx.moveTo(pad.l,yy); ctx.lineTo(w-pad.r,yy); ctx.stroke(); }
+    ctx.globalAlpha = 1;
+    const grad = ctx.createLinearGradient(0,pad.t,0,h-pad.b);
+    grad.addColorStop(0, this.hexA(accent,0.22)); grad.addColorStop(1, this.hexA(accent,0));
+    ctx.beginPath(); ctx.moveTo(x(0),y(data[0].v));
+    data.forEach((d,i)=>ctx.lineTo(x(i),y(d.v)));
+    ctx.lineTo(x(data.length-1),h-pad.b); ctx.lineTo(x(0),h-pad.b); ctx.closePath();
+    ctx.fillStyle = grad; ctx.fill();
+    ctx.beginPath(); ctx.moveTo(x(0),y(data[0].v));
+    data.forEach((d,i)=>ctx.lineTo(x(i),y(d.v)));
+    ctx.strokeStyle = accent; ctx.lineWidth = 1.8; ctx.lineJoin='round'; ctx.stroke();
+    const hv = this.state.eqHover;
+    if (hv != null && hv >= 0 && hv < data.length) {
+      const hx = x(hv), hy = y(data[hv].v);
+      ctx.strokeStyle = faint; ctx.globalAlpha=0.6; ctx.setLineDash([3,3]);
+      ctx.beginPath(); ctx.moveTo(hx,pad.t); ctx.lineTo(hx,h-pad.b); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha=1;
+      ctx.fillStyle = this.cssVar('--surface'); ctx.strokeStyle = accent; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(hx,hy,4,0,7); ctx.fill(); ctx.stroke();
+    }
+  }
+
+  drawPx() {
+    const c = this.setupCanvas(document.getElementById('ck-px')); if (!c) return;
+    const { ctx, w, h } = c;
+    const data = this.candles;
+    ctx.clearRect(0,0,w,h);
+    const pad = { l: 6, r: 6, t: 10, b: 16 };
+    const his = data.map(d=>d.h), los = data.map(d=>d.l);
+    const min = Math.min(...los), max = Math.max(...his), span=(max-min)||1;
+    const y = v => pad.t + (1-(v-min)/span)*(h-pad.t-pad.b);
+    const n = data.length, slot = (w-pad.l-pad.r)/n;
+    const cw = Math.max(2, slot*0.6);
+    const pos = this.cssVar('--pos'), neg = this.cssVar('--neg'), border=this.cssVar('--border'), faint=this.cssVar('--faint');
+    ctx.strokeStyle = border; ctx.globalAlpha=0.5; ctx.lineWidth=1;
+    for (let g=0; g<=3; g++){ const yy=pad.t+g/3*(h-pad.t-pad.b); ctx.beginPath(); ctx.moveTo(pad.l,yy); ctx.lineTo(w-pad.r,yy); ctx.stroke(); }
+    ctx.globalAlpha=1;
+    data.forEach((d,i)=>{ const cx = pad.l + slot*(i+0.5); const up = d.c>=d.o; const col = up?pos:neg;
+      ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.moveTo(cx,y(d.h)); ctx.lineTo(cx,y(d.l)); ctx.stroke();
+      const yo=y(d.o), yc=y(d.c); const top=Math.min(yo,yc); const bh=Math.max(1,Math.abs(yc-yo));
+      ctx.fillRect(cx-cw/2, top, cw, bh);
+    });
+    const hv = this.state.pxHover;
+    if (hv != null && hv>=0 && hv<n) {
+      const cx = pad.l + slot*(hv+0.5);
+      ctx.strokeStyle = faint; ctx.globalAlpha=0.55; ctx.setLineDash([3,3]);
+      ctx.beginPath(); ctx.moveTo(cx,pad.t); ctx.lineTo(cx,h-pad.b); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha=1;
+    }
+  }
+
+  hexA(hex, a) {
+    hex = hex.trim();
+    if (hex.startsWith('#')) { const n=parseInt(hex.slice(1),16); const r=(n>>16)&255,g=(n>>8)&255,b=n&255; return `rgba(${r},${g},${b},${a})`; }
+    return hex;
+  }
+
+  emit(src, lvl, msg) {
+    const tm = new Date().toLocaleTimeString('en-GB', { hour12:false });
+    this.setState(s => ({ log: [...s.log, { tm, src, lvl, msg }], termOpen: true }));
+  }
+
+  // ---- handlers ----
+  go(s) { return () => this.setState({ screen: s, eqHover: null, pxHover: null }); }
+  setTheme(t) { return () => { this.setState({ theme: t }); this.applyTheme(t); if (this._draw) { this._draw(); setTimeout(this._draw, 60); } }; }
+  toggleTerm = () => this.setState(s => ({ termOpen: !s.termOpen }));
+  setFilter(f) { return () => this.setState({ termFilter: f }); }
+  clearTerm = () => this.setState({ log: [] });
+  setRange(r) { return () => this.setState({ range: r }); }
+
+  toggleMode = () => {
+    if (this.state.mode === 'paper') {
+      this.setState({ confirm: {
+        title: 'Switch to LIVE trading?',
+        body: 'Live mode places real orders on Revolut X using your account funds. Every Start in this session will trade real money. Make sure you have run a pre-flight check.',
+        yesText: 'Enable LIVE mode',
+        action: () => { this.setState({ mode: 'live', liveMode: 'live' }); this.emit('sys','warn','mode: switched to LIVE — real orders enabled'); },
+      }});
+    } else {
+      this.setState({ mode: 'paper', liveMode: 'paper' });
+      this.emit('sys','info','mode: switched back to PAPER');
+    }
+  };
+  toggleLiveMode = () => this.toggleMode();
+
+  toggleLoop = () => {
+    if (this.state.liveRunning) {
+      this.setState({ liveRunning: false });
+      this.emit('live','info','loop: stopped by operator');
+      return;
+    }
+    if (this.state.mode === 'live') {
+      this.setState({ confirm: {
+        title: 'Start LIVE loop?',
+        body: 'This starts a real-money trading loop on BTC-EUR every 60s with trend_following. Orders will be placed automatically until you press Stop.',
+        yesText: 'Start LIVE loop',
+        action: () => { this.setState({ liveRunning: true }); this.emit('live','warn','loop: STARTED in LIVE mode · BTC-EUR · 60s'); },
+      }});
+    } else {
+      this.setState({ liveRunning: true });
+      this.emit('live','ok','loop: started in PAPER mode · BTC-EUR · 60s');
+    }
+  };
+
+  confirmYes = () => { const c = this.state.confirm; this.setState({ confirm: null }); if (c && c.action) c.action(); };
+  confirmNo = () => this.setState({ confirm: null });
+
+  runPortfolio = () => { this.emit('portfolio','info','backtest: `Balanced Majors` — 4 allocations, replaying…'); setTimeout(()=>this.emit('portfolio','ok','backtest: COMPLETE · 142 trades · +18.42% · sharpe 1.74'), 400); };
+  runBacktest = () => { this.emit('backtest','info','backtest: mean_reversion on ETH-EUR @ 1h, replaying…'); setTimeout(()=>this.emit('backtest','ok','backtest: COMPLETE · 88 trades · +12.10% · sharpe 1.31'), 400); };
+  runSuggest = () => this.emit('backtest','ok','suggest: SOL-EUR → BUY (STRONG) from latest candle');
+  runBackfill = () => { this.emit('data','info','backfill: BTC-EUR 1h from 2024-01-01, paging…'); setTimeout(()=>this.emit('data','ok','backfill: COMPLETE · 8,040 candles persisted'), 400); };
+
+  // ---- style strings ----
+  primaryBtn = 'background:var(--accent); color:#0a1410; border:none; border-radius:8px; padding:9px 16px; font-weight:600; font-size:12.5px; cursor:pointer; font-family:inherit; flex:1;';
+  secondaryBtn = 'background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:9px 16px; font-weight:500; font-size:12.5px; cursor:pointer; font-family:inherit;';
+  ghostBtn = 'background:none; border:1px solid var(--border); color:var(--dim); border-radius:6px; padding:3px 9px; font-size:11px; cursor:pointer; font-family:inherit;';
+  tinyBtn = 'flex:1; background:var(--bg); border:1px solid var(--border); color:var(--dim); border-radius:7px; padding:7px; font-size:11.5px; cursor:pointer; font-family:inherit;';
+  fieldLabel = 'display:block; font-size:10.5px; color:var(--faint); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:5px;';
+  fakeSelect = 'display:flex; justify-content:space-between; align-items:center; background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:9px 11px; font-size:12.5px; cursor:pointer;';
+  fakeInput = 'background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:9px 11px; font-size:12.5px; font-family:IBM Plex Mono,monospace;';
+
+  coin(sym) {
+    const colors = { BTC:'#f7931a', ETH:'#627eea', SOL:'#14f195', ADA:'#0d6efd', XRP:'#23a8d8', DOT:'#e6007a', LINK:'#2a5ada', AVAX:'#e84142' };
+    const k = sym.split('-')[0];
+    return { c: colors[k] || '#888', k };
+  }
+  coinBadge(sym) {
+    const { c, k } = this.coin(sym);
+    return `width:28px; height:28px; border-radius:7px; flex:none; display:flex; align-items:center; justify-content:center; font-family:IBM Plex Mono,monospace; font-weight:700; font-size:9.5px; color:#fff; background:${c};`;
+  }
+
+  renderVals() {
+    const S = this.state;
+    this.ensureInit();
+    if (!this.root) this.root = React.createRef();
+    if (!this.eqCanvas) this.eqCanvas = React.createRef();
+    if (!this.pxCanvas) this.pxCanvas = React.createRef();
+    if (!this.termBody) this.termBody = React.createRef();
+
+    const screens = {
+      dashboard: ['Dashboard', 'Engine state, open positions, and order history across paper and live sessions.'],
+      backtest: ['Backtest', 'Replay a single strategy over a stored dataset. Tune by hand or sweep with the optimizer.'],
+      portfolio: ['Portfolio', 'Build a multi-pair portfolio sharing one cash pool, then backtest the whole allocation in one run.'],
+      suggest: ['Suggest', 'Generate a one-shot trade suggestion from the latest stored candle. No order is placed.'],
+      live: ['Live trading', 'Run a strategy on a periodic interval against Revolut X. Paper replays locally; live places real orders.'],
+      data: ['Data', 'Historical OHLCV the research and trading engines read from. Backfilled from Revolut X and auto-synced on startup.'],
+      settings: ['Settings', 'Connection, default risk limits, and appearance. The knobs that rarely change live here, out of the workflow.'],
+    };
+    const sc = screens[S.screen] || screens.portfolio;
+
+    // theme buttons
+    const themeMeta = { carbon: '●', slate: '●', daylight: '○' };
+    const themeBtns = ['carbon','slate','daylight'].map(t => ({
+      label: t, dot: t === 'daylight' ? '☀' : '◐',
+      onClick: this.setTheme(t),
+      style: `width:26px; height:24px; border-radius:6px; border:none; cursor:pointer; font-size:12px; font-family:inherit; background:${S.theme===t?'var(--accent)':'transparent'}; color:${S.theme===t?'#0a1410':'var(--faint)'};`,
+    }));
+
+    // nav
+    const groups = [
+      { label: 'Research', items: [['backtest','BT','Backtest',''],['portfolio','PF','Portfolio','4']] },
+      { label: 'Trade', items: [['suggest','SG','Suggest',''],['live','LV','Live', S.liveRunning?'●':'']] },
+      { label: 'Monitor', items: [['dashboard','DB','Dashboard','3']] },
+      { label: 'System', items: [['data','DT','Data',''],['settings','ST','Settings','']] },
+    ];
+    const navGroups = groups.map(g => ({
+      label: g.label,
+      items: g.items.map(([key,tag,label,badge]) => {
+        const active = S.screen === key;
+        return {
+          key, tag, label, badge,
+          onClick: this.go(key),
+          style: `display:flex; align-items:center; gap:9px; width:100%; padding:8px 9px; border:none; border-radius:8px; cursor:pointer; font-family:inherit; font-size:13px; font-weight:${active?'600':'500'}; text-align:left; background:${active?'var(--accent-soft)':'transparent'}; color:${active?'var(--text)':'var(--dim)'}; position:relative;`,
+          barStyle: `position:absolute; left:0; top:7px; bottom:7px; width:3px; border-radius:2px; background:${active?'var(--accent)':'transparent'};`,
+          tagStyle: `width:22px; height:18px; border-radius:5px; flex:none; display:flex; align-items:center; justify-content:center; font-family:IBM Plex Mono,monospace; font-size:9px; font-weight:600; background:${active?'var(--accent)':'var(--surface2)'}; color:${active?'#0a1410':'var(--faint)'};`,
+          badgeStyle: badge ? `font-family:IBM Plex Mono,monospace; font-size:10px; color:${badge==='●'?'var(--live)':'var(--faint)'};` : 'display:none;',
+        };
+      }),
+    }));
+
+    // banner
+    const live = S.mode === 'live';
+    const bannerStyle = `display:flex; align-items:center; gap:10px; height:34px; padding:0 18px; flex:none; background:${live?this.hexA(this.cssVar('--live'),0.16):this.hexA(this.cssVar('--paper'),0.13)}; border-bottom:1px solid ${live?'var(--live)':'var(--border)'}; color:${live?'var(--live)':'var(--paper)'};`;
+    const bannerDotStyle = `width:9px; height:9px; border-radius:50%; background:${live?'var(--live)':'var(--paper)'}; ${live?'animation:ck-pulse 1.6s infinite;':''}`;
+
+    // portfolios
+    const pfList = [
+      ['Balanced Majors','4 pairs · trend + mean-rev','+18.4%', true],
+      ['BTC Momentum','1 pair · trend_following','+9.1%', false],
+      ['Alt Rotation','6 pairs · mean_reversion','−2.3%', false],
+    ];
+    const portfolios = pfList.map(([name,meta,ret,active]) => ({
+      name, meta, ret,
+      onClick: () => this.emit('portfolio','info',`loaded \`${name}\``),
+      style: `display:flex; justify-content:space-between; align-items:center; width:100%; padding:10px; margin-bottom:6px; border-radius:9px; cursor:pointer; font-family:inherit; border:1px solid ${active?'var(--accent-dim)':'var(--border)'}; background:${active?'var(--accent-soft)':'var(--bg)'};`,
+      retStyle: `font-family:IBM Plex Mono,monospace; font-weight:600; font-size:12.5px; color:${ret.startsWith('−')?'var(--neg)':'var(--pos)'};`,
+    }));
+
+    const allocData = [['BTC-EUR','trend_following','40%',40],['ETH-EUR','trend_following','30%',30],['SOL-EUR','mean_reversion','20%',20],['LINK-EUR','mean_reversion','10%',10]];
+    const allocations = allocData.map(([symbol,strategy,weight,pct]) => ({
+      symbol, strategy, weight,
+      coin: this.coin(symbol).k, coinStyle: this.coinBadge(symbol),
+      barStyle: `display:block; height:100%; width:${pct*2}%; background:var(--accent); border-radius:3px;`,
+    }));
+
+    const pfMetrics = [
+      ['Total return','+€4,610','+18.42%','pos'],
+      ['Sharpe','1.74','annualised',''],
+      ['Max drawdown','−11.3%','peak to trough','neg'],
+      ['Win rate','58.4%','142 trades',''],
+    ].map(([label,value,sub,tone]) => ({ label, value, sub,
+      valueStyle: `font-family:IBM Plex Mono,monospace; font-weight:600; font-size:21px; margin-top:4px; color:${tone==='pos'?'var(--pos)':tone==='neg'?'var(--neg)':'var(--text)'};` }));
+
+    const breakdown = [
+      ['BTC-EUR','trend_following','38','61.2%','+€2,140'],
+      ['ETH-EUR','trend_following','44','57.8%','+€1,680'],
+      ['SOL-EUR','mean_reversion','39','55.1%','+€1,210'],
+      ['LINK-EUR','mean_reversion','21','52.4%','−€420'],
+    ].map(([symbol,strategy,trades,win,pnl]) => ({ symbol, strategy, trades, win, pnl,
+      pnlStyle: `color:${pnl.startsWith('−')?'var(--neg)':'var(--pos)'};` }));
+
+    const rangeBtns = ['1M','3M','6M','ALL'].map(r => ({ label: r, onClick: this.setRange(r),
+      style: `background:${S.range===r?'var(--surface2)':'transparent'}; border:1px solid ${S.range===r?'var(--border)':'transparent'}; color:${S.range===r?'var(--text)':'var(--faint)'}; border-radius:6px; padding:3px 9px; font-size:11px; cursor:pointer; font-family:inherit;` }));
+
+    // equity tooltip
+    const eqData = S.screen === 'backtest' ? this.btEquity : this.equity;
+    let eqTip = { style:'display:none;', date:'', val:'', delta:'', deltaStyle:'display:none;' };
+    if (S.eqHover != null && eqData[S.eqHover]) {
+      const d = eqData[S.eqHover]; const base = eqData[0].v; const dp = ((d.v/base-1)*100);
+      const leftPct = (S.eqHover/(eqData.length-1))*100;
+      const side = leftPct > 60 ? `right:${100-leftPct}%; margin-right:10px;` : `left:${leftPct}%; margin-left:10px;`;
+      eqTip = { style:`position:absolute; top:8px; ${side} background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:7px 10px; pointer-events:none; box-shadow:0 6px 18px var(--shadow);`,
+        date: d.label, val: Math.round(d.v).toLocaleString(),
+        delta: (dp>=0?'+':'')+dp.toFixed(2)+'%', deltaStyle:`font-family:IBM Plex Mono,monospace; font-size:11px; color:${dp>=0?'var(--pos)':'var(--neg)'};` };
+    }
+    const eqHover = (e) => { const r=e.currentTarget.getBoundingClientRect(); const i=Math.round(((e.clientX-r.left)/r.width)*(eqData.length-1)); this.setState({ eqHover: Math.max(0,Math.min(eqData.length-1,i)) }); };
+    const eqLeave = () => this.setState({ eqHover: null });
+
+    // price tooltip
+    const pxData = this.candles;
+    let pxTip = { style:'display:none;', date:'', o:'', c:'', h:'', l:'' };
+    if (S.pxHover != null && pxData[S.pxHover]) {
+      const d = pxData[S.pxHover]; const leftPct=(S.pxHover/(pxData.length-1))*100;
+      const side = leftPct>60 ? `right:${100-leftPct}%; margin-right:10px;` : `left:${leftPct}%; margin-left:10px;`;
+      pxTip = { style:`position:absolute; top:8px; ${side} background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:7px 10px; pointer-events:none; box-shadow:0 6px 18px var(--shadow);`,
+        date:d.label, o:Math.round(d.o).toLocaleString(), c:Math.round(d.c).toLocaleString(), h:Math.round(d.h).toLocaleString(), l:Math.round(d.l).toLocaleString() };
+    }
+    const pxHover = (e) => { const r=e.currentTarget.getBoundingClientRect(); const i=Math.round(((e.clientX-r.left)/r.width)*(pxData.length-1)); this.setState({ pxHover: Math.max(0,Math.min(pxData.length-1,i)) }); };
+    const pxLeave = () => this.setState({ pxHover: null });
+
+    // live
+    const liveOn = S.liveRunning;
+    const liveCalloutStyle = `display:flex; align-items:center; gap:13px; padding:14px 16px; border-radius:11px; border:1px solid ${live?'var(--live)':'var(--paper)'}; background:${live?this.hexA(this.cssVar('--live'),0.1):this.hexA(this.cssVar('--paper'),0.09)};`;
+    const liveStats = [['Iterations', liveOn?'37':'0'],['Signals', liveOn?'12':'0'],['Executions', liveOn?'4':'0'],['Errors','0']].map(([label,value])=>({label,value}));
+    const loopRows = [
+      ['Symbol','BTC-EUR'],['Strategy','trend_following'],['Interval','60s'],
+      ['Mode', S.liveMode.toUpperCase()],['Engine ID', liveOn?'eng_8a3f':'—'],
+      ['Last signal', liveOn?'HOLD · 09:41:02':'—'],
+    ].map(([k,v])=>({k,v}));
+
+    // dashboard
+    const dashMetrics = [
+      ['Account equity','€26,840','+7.4% all-time',''],
+      ['Open P&L','+€428.10','3 positions','pos'],
+      ['Realised (30d)','+€1,914','62 trades','pos'],
+      ['Active engines','1','paper loop',''],
+    ].map(([label,value,sub,tone])=>({label,value,sub,
+      valueStyle:`font-family:IBM Plex Mono,monospace; font-weight:600; font-size:22px; margin-top:4px; color:${tone==='pos'?'var(--pos)':tone==='neg'?'var(--neg)':'var(--text)'};`}));
+
+    const positions = [
+      ['BTC-EUR','LONG','0.184','€56,120','€58,412','+€421.70'],
+      ['ETH-EUR','LONG','1.92','€2,940','€3,008','+€130.56'],
+      ['SOL-EUR','LONG','14.0','€142.10','€138.20','−€54.60'],
+    ].map(([symbol,side,qty,entry,mark,pnl])=>({symbol,side,qty,entry,mark,pnl,
+      sideStyle:`font-family:IBM Plex Mono,monospace; font-size:10.5px; font-weight:600; padding:2px 7px; border-radius:4px; color:var(--pos); background:var(--accent-soft);`,
+      pnlStyle:`color:${pnl.startsWith('−')?'var(--neg)':'var(--pos)'};`}));
+
+    const orders = [
+      ['09:40:11','BTC-EUR','BUY','market','0.064','€58,200','filled'],
+      ['09:12:55','ETH-EUR','BUY','market','0.92','€2,995','filled'],
+      ['08:55:02','SOL-EUR','SELL','limit','6.0','€140.00','open'],
+      ['08:31:48','LINK-EUR','BUY','market','12.0','€13.84','filled'],
+    ].map(([time,symbol,side,type,qty,price,status])=>({time,symbol,side,type,qty,price,status,
+      sideStyle:`font-family:IBM Plex Mono,monospace; font-size:10.5px; font-weight:600; padding:2px 7px; border-radius:4px; color:${side==='SELL'?'var(--neg)':'var(--pos)'}; background:${side==='SELL'?this.hexA(this.cssVar('--neg'),0.12):'var(--accent-soft)'};`,
+      statusStyle:`font-size:11px; color:${status==='open'?'var(--paper)':'var(--dim)'};`}));
+
+    const btMetrics = [['Return','+12.1%','pos'],['Sharpe','1.31',''],['Max DD','−9.0%','neg'],['Trades','88','']].map(([label,value,tone])=>({label,value,
+      valueStyle:`font-family:IBM Plex Mono,monospace; font-weight:600; font-size:19px; margin-top:4px; color:${tone==='pos'?'var(--pos)':tone==='neg'?'var(--neg)':'var(--text)'};`}));
+
+    const suggestRows = [['Symbol','SOL-EUR'],['Timeframe','1h'],['Signal','BUY'],['Strength','STRONG'],['Current price','€138.42'],['Candles used','210']].map(([k,v])=>({k,v}));
+
+    const datasets = [
+      ['BTC-EUR','1h','8,040','2024-01-01 → 2026-06-20','live'],
+      ['ETH-EUR','1h','8,023','2024-01-02 → 2026-06-20','live'],
+      ['SOL-EUR','1h','7,180','2024-04-01 → 2026-06-20','live'],
+      ['LINK-EUR','4h','3,210','2024-01-01 → 2026-06-20','3h ago'],
+      ['BTC-EUR','1d','890','2023-12-01 → 2026-06-20','live'],
+    ].map(([symbol,tf,candles,range,fresh])=>({symbol,tf,candles,range,fresh}));
+
+    const settingsConn = [
+      ['API key','••••••3f2a', 'ok'],['Private key','loaded · ed25519','ok'],['Base URL','exchange.revolut.com','dim'],['Discord webhook','configured','ok'],
+    ].map(([k,v,t])=>({k,v,vStyle:`font-family:IBM Plex Mono,monospace; font-size:12px; color:${t==='ok'?'var(--pos)':'var(--dim)'};`}));
+    const settingsRisk = [['Max position size','25%'],['Stop loss','−8%'],['Take profit','+15%'],['Circuit breaker drawdown','−15%'],['Max open positions','5']].map(([k,v])=>({k,v}));
+
+    const themeCards = [
+      ['carbon','Carbon','Dark · teal accent','#14171c','#3fd9a8','#f0616d'],
+      ['slate','Slate','Dark · violet accent','#1a1d27','#8b8cf0','#5ad1a0'],
+      ['daylight','Daylight','Light · green accent','#f4f3ef','#0f9d76','#d63d4e'],
+    ].map(([key,name,desc,c1,c2,c3])=>({ name, desc, c1, c2, c3, onClick: this.setTheme(key),
+      style:`flex:1; text-align:left; cursor:pointer; font-family:inherit; padding:12px; border-radius:10px; background:var(--bg); border:1px solid ${S.theme===key?'var(--accent)':'var(--border)'};`}));
+
+    // rail
+    const railPositions = positions.map(p => ({ symbol: p.symbol, qty: p.qty+' '+this.coin(p.symbol).k, coin:this.coin(p.symbol).k, coinStyle:this.coinBadge(p.symbol).replace('28px','24px').replace('28px','24px'), pnl:p.pnl,
+      pnlStyle:`font-family:IBM Plex Mono,monospace; font-size:11.5px; font-weight:600; color:${p.pnl.startsWith('−')?'var(--neg)':'var(--pos)'};` }));
+    const watchlist = [['BTC-EUR','58,412','+1.8%'],['ETH-EUR','3,008','+2.3%'],['SOL-EUR','138.2','−2.7%'],['LINK-EUR','13.84','+0.4%']].map(([symbol,price,chg])=>({symbol,price,chg,
+      chgStyle:`font-family:IBM Plex Mono,monospace; font-size:11px; font-weight:600; color:${chg.startsWith('−')?'var(--neg)':'var(--pos)'};`}));
+
+    // terminal
+    const srcColors = { sys:'var(--accent)', data:'#7aa2f7', backtest:'#bb9af7', portfolio:'var(--accent)', live: live?'var(--live)':'var(--paper)' };
+    const lvlColors = { ok:'var(--pos)', info:'var(--dim)', warn:'var(--paper)', err:'var(--neg)' };
+    const filtered = S.termFilter==='all' ? S.log : S.log.filter(l => l.src === S.termFilter || (S.termFilter==='live' && l.src==='live'));
+    const termLines = filtered.map(l => ({ tm:l.tm, src:l.src, msg:l.msg,
+      tagStyle:`flex:none; width:62px; color:${srcColors[l.src]||'var(--faint)'};`,
+      msgStyle:`color:${lvlColors[l.lvl]||'var(--text)'};` }));
+    const termFilters = [['all','all'],['sys','sys'],['data','data'],['backtest','backtest'],['live','live']].map(([key,label])=>({label,onClick:this.setFilter(key),
+      style:`background:${S.termFilter===key?'var(--surface2)':'transparent'}; border:none; color:${S.termFilter===key?'var(--text)':'var(--faint)'}; border-radius:5px; padding:3px 8px; font-size:10.5px; cursor:pointer; font-family:IBM Plex Mono,monospace;`}));
+
+    const termWrapStyle = `flex:none; background:var(--surface); display:flex; flex-direction:column; z-index:25;`;
+    const termBodyStyle = S.termOpen
+      ? `height:150px; overflow-y:auto; padding:9px 14px; font-family:IBM Plex Mono,monospace; font-size:11.5px; background:var(--bg); border-top:1px solid var(--border);`
+      : `height:0; overflow:hidden;`;
+    const termCaretStyle = `display:inline-block; transition:transform 0.15s; transform:rotate(${S.termOpen?'90deg':'0deg'}); color:var(--faint); font-size:10px;`;
+
+    const cf = S.confirm;
+
+    return {
+      root: this.root, eqCanvas: this.eqCanvas, pxCanvas: this.pxCanvas, termBody: this.termBody,
+      balance: '26,840.18', lastSync: '09:41:58',
+      screenTitle: sc[0], screenSub: sc[1], screenSynced: 'just now',
+      themeBtns, navGroups,
+      bannerStyle, bannerDotStyle,
+      bannerTitle: live ? 'LIVE TRADING' : 'PAPER TRADING',
+      bannerSub: live ? 'Real orders are placed on Revolut X with account funds.' : 'Simulated against stored data — no real orders.',
+      bannerMeta: live ? 'real funds at risk' : 'safe sandbox',
+      bannerBtnText: live ? 'Switch to paper' : 'Go live →',
+      bannerBtnStyle: `background:${live?'rgba(255,255,255,0.12)':'transparent'}; border:1px solid currentColor; color:inherit; border-radius:6px; padding:4px 12px; font-size:11.5px; font-weight:600; cursor:pointer; font-family:inherit;`,
+      toggleMode: this.toggleMode,
+
+      isDashboard: S.screen==='dashboard', isBacktest: S.screen==='backtest', isPortfolio: S.screen==='portfolio',
+      isSuggest: S.screen==='suggest', isLive: S.screen==='live', isData: S.screen==='data', isSettings: S.screen==='settings',
+
+      portfolios, allocations, allocCount: allocData.length, pfMetrics, breakdown, rangeBtns,
+      runPortfolio: this.runPortfolio,
+      primaryBtn: this.primaryBtn, secondaryBtn: this.secondaryBtn, ghostBtn: this.ghostBtn, tinyBtn: this.tinyBtn,
+      fieldLabel: this.fieldLabel, fakeSelect: this.fakeSelect, fakeInput: this.fakeInput,
+
+      eqCanvasRef: this.eqCanvas, eqHover, eqLeave,
+      eqTipStyle: eqTip.style, eqTipDate: eqTip.date, eqTipVal: eqTip.val, eqTipDelta: eqTip.delta, eqTipDeltaStyle: eqTip.deltaStyle,
+      pxHover, pxLeave, pxTipStyle: pxTip.style, pxTipDate: pxTip.date, pxTipO: pxTip.o, pxTipC: pxTip.c, pxTipH: pxTip.h, pxTipL: pxTip.l,
+
+      liveCalloutStyle, liveCalloutDot:`width:11px; height:11px; border-radius:50%; flex:none; background:${live?'var(--live)':'var(--paper)'}; ${live?'animation:ck-pulse 1.6s infinite;':''}`,
+      liveCalloutTitle: live ? 'LIVE mode armed' : 'PAPER mode — safe sandbox',
+      liveCalloutSub: live ? 'Starting the loop will place real orders on Revolut X every interval.' : 'The loop replays signals against stored data. Switch to live when you are ready to trade for real.',
+      toggleLiveMode: this.toggleLiveMode,
+      liveModeBtnText: live ? 'Back to paper' : 'Arm live →',
+      liveModeBtnStyle:`background:${live?'rgba(255,255,255,0.1)':'var(--paper)'}; color:${live?'var(--live)':'#1a1206'}; border:1px solid ${live?'var(--live)':'transparent'}; border-radius:7px; padding:7px 13px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; flex:none;`,
+      liveStats, loopRows,
+      toggleLoop: this.toggleLoop,
+      loopBtnText: liveOn ? 'Stop loop' : (live ? 'Start LIVE loop' : 'Start paper loop'),
+      loopBtnStyle:`width:100%; margin-top:13px; border:none; border-radius:8px; padding:11px; font-weight:600; font-size:13px; cursor:pointer; font-family:inherit; background:${liveOn?'var(--neg)':(live?'var(--live)':'var(--accent)')}; color:${liveOn?'#fff':(live?'#fff':'#0a1410')};`,
+      loopStatusText: liveOn ? 'running' : 'stopped',
+      loopStatusPill:`font-family:IBM Plex Mono,monospace; font-size:10px; font-weight:600; padding:3px 9px; border-radius:5px; color:${liveOn?'var(--pos)':'var(--faint)'}; background:${liveOn?'var(--accent-soft)':'var(--surface2)'};`,
+
+      dashMetrics, positions, orders, btMetrics, suggestRows, datasets, settingsConn, settingsRisk, themeCards,
+      runBacktest: this.runBacktest, runSuggest: this.runSuggest, runBackfill: this.runBackfill,
+
+      railLoopStyle:`padding:11px; border-radius:9px; background:${liveOn?'var(--accent-soft)':'var(--bg)'}; border:1px solid ${liveOn?'var(--accent-dim)':'var(--border)'};`,
+      railLoopDot:`width:8px; height:8px; border-radius:50%; background:${liveOn?'var(--pos)':'var(--faint)'};`,
+      railLoopState: liveOn ? 'Running' : 'Idle',
+      railLoopSub: liveOn ? `${S.liveMode} · BTC-EUR · 60s` : 'No active loop',
+      railPositions, watchlist,
+
+      termWrapStyle, termBodyStyle, termCaretStyle, toggleTerm: this.toggleTerm, clearTerm: this.clearTerm,
+      termCount: S.log.length, termLines, termFilters,
+
+      confirmOpen: !!cf, confirmTitle: cf?cf.title:'', confirmBody: cf?cf.body:'', confirmYesText: cf?cf.yesText:'Confirm',
+      confirmYes: this.confirmYes, confirmNo: this.confirmNo,
+    };
+  }
+}
+</script>
+</body>
+</html>

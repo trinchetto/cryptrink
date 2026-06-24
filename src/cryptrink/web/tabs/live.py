@@ -1,12 +1,10 @@
-"""Live tab for the Cryptrink Gradio web app.
+"""Live screen for the Cryptrink workspace UI.
 
-Drives a strategy on a periodic interval via :class:`LiveLoop`. Mode is
-selectable: paper (default) uses :class:`PaperExecutor` against the
-historical OHLCV in the configured database; live builds a
-:class:`LiveExecutor` against :class:`RevolutXExchange` when
-``REVOLUTX_API_KEY`` plus a private key are present, and silently falls
-back to paper otherwise so the Start button never accidentally turns
-into real-money trading.
+Drives a strategy on a periodic interval via :class:`LiveLoop`. The active trading
+mode is the global workspace mode (paper / live): paper replays signals against the
+stored OHLCV; live builds a :class:`LiveExecutor` against Revolut X when credentials
+are present, and silently falls back to paper otherwise so Start never accidentally
+turns into real-money trading. Starting in live mode is gated by a browser confirm.
 """
 
 from __future__ import annotations
@@ -19,22 +17,28 @@ from typing import TYPE_CHECKING
 import gradio as gr
 
 from cryptrink.cli.utils import init_db_schema
+from cryptrink.data.feed import HistoricalDataFeed
+from cryptrink.data.storage import OHLCVRepository
 from cryptrink.runtime import resolve_strategy
 from cryptrink.strategies import registry as strategy_registry
 from cryptrink.strategies.base import SignalType
+from cryptrink.web import charts, components
 from cryptrink.web.live_loop import LiveLoop, LiveLoopState, get_active_loop, set_active_loop
 from cryptrink.web.live_setup import LiveMode, build_live_components, has_revolutx_credentials
 from cryptrink.web.state import (
     Dataset,
-    default_symbol,
+    get_active_screen,
+    get_mode,
     get_runtime,
-    get_symbol_choices,
     list_datasets,
     list_datasets_sync,
+    log_event,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
+
+    import plotly.graph_objects as go  # type: ignore[import-untyped]
 
     from cryptrink.execution.base import ExecutionResult
     from cryptrink.execution.repository import OrderRepository
@@ -48,9 +52,8 @@ def _build_discord_callback(
 ) -> Callable[[Signal, ExecutionResult], Awaitable[None]]:
     """Wrap the discord notifier in an on_signal-shaped callback.
 
-    Only successful executions that produced an ``order_id`` actually fire
-    a Discord embed. HOLD signals and rejected executions are skipped
-    silently — they're already visible in the loop's status pane.
+    Only successful executions that produced an ``order_id`` actually fire a Discord
+    embed. HOLD signals and rejected executions are skipped silently.
     """
 
     async def callback(signal: Signal, result: ExecutionResult) -> None:
@@ -71,7 +74,7 @@ async def _dataset_choices() -> list[tuple[str, str]]:
 
 
 async def refresh_datasets(current: str | None) -> object:
-    """Re-query the OHLCV table and update this tab's Dataset dropdown."""
+    """Re-query the OHLCV table and update this screen's Dataset dropdown."""
     choices = await _dataset_choices()
     if not choices:
         return gr.update(choices=[], value=None)
@@ -80,22 +83,55 @@ async def refresh_datasets(current: str | None) -> object:
     return gr.update(choices=choices, value=new_value)
 
 
+async def _load_candles(dataset_value: str | None) -> list[dict[str, object]]:
+    """Read recent stored OHLCV for the selected dataset as candlestick rows."""
+    if not dataset_value:
+        return []
+    try:
+        symbol, timeframe = Dataset.parse(dataset_value)
+    except ValueError:
+        return []
+    runtime = get_runtime()
+    feed = HistoricalDataFeed(OHLCVRepository(runtime.session_factory))
+    try:
+        rows = await feed.get_ohlcv(symbol, timeframe, limit=120)
+    except Exception:  # the chart is best-effort; never break the screen on a read
+        return []
+    return [
+        {
+            "time": datetime.fromtimestamp(int(row["timestamp"]) / 1000, tz=UTC),
+            "open": float(row["open"]),
+            "high": float(row["high"]),
+            "low": float(row["low"]),
+            "close": float(row["close"]),
+        }
+        for row in rows
+    ]
+
+
+async def load_candle_chart(dataset_value: str | None) -> go.Figure:
+    """Build the candlestick figure for the selected dataset."""
+    return charts.candlestick_figure(await _load_candles(dataset_value))
+
+
 async def start_loop(
     strategy_name: str,
     dataset_value: str | None,
     interval_seconds: float,
     initial_balance: float,
-    mode_value: str,
     heartbeat_enabled: bool,
     heartbeat_interval_seconds: float,
-) -> str:
-    """Build a fresh :class:`LiveLoop` and start it. Used by the Start button."""
+) -> tuple[str, str]:
+    """Build a fresh :class:`LiveLoop` and start it. Used by the Start button.
+
+    The requested mode is the global workspace mode; ``build_live_components`` falls
+    back to paper when live is requested without credentials.
+    """
     if not strategy_name:
         raise gr.Error("Select a strategy.")
     if not dataset_value:
         raise gr.Error(
-            "Select a dataset. Open the Data tab and run Backfill if the "
-            "dropdown is empty, then click Refresh datasets here."
+            "Select a dataset. Open the Data screen and run Backfill if the dropdown is empty."
         )
     try:
         symbol, dataset_timeframe = Dataset.parse(dataset_value)
@@ -106,10 +142,7 @@ async def start_loop(
     if heartbeat_enabled and heartbeat_interval_seconds <= 0:
         raise gr.Error("Heartbeat interval must be positive.")
 
-    try:
-        requested_mode = LiveMode(mode_value)
-    except ValueError as exc:
-        raise gr.Error(f"Unknown mode '{mode_value}'.") from exc
+    requested_mode = LiveMode(get_mode())
 
     existing = get_active_loop()
     if existing is not None and existing.is_running:
@@ -123,11 +156,9 @@ async def start_loop(
     if strategy.timeframe != dataset_timeframe:
         raise gr.Error(
             f"Strategy {strategy.name!r} expects timeframe={strategy.timeframe!r} "
-            f"but the selected dataset is {dataset_timeframe!r}. The Live loop "
-            f"would fetch candles at {strategy.timeframe!r} and bypass the "
-            f"selected dataset entirely. Pick a dataset that matches the "
-            f"strategy's timeframe, or backfill {strategy.timeframe!r} for "
-            f"{symbol} from the Data tab."
+            f"but the selected dataset is {dataset_timeframe!r}. Pick a dataset that "
+            f"matches the strategy's timeframe, or backfill {strategy.timeframe!r} "
+            f"for {symbol} from the Data screen."
         )
 
     runtime = get_runtime()
@@ -153,15 +184,9 @@ async def start_loop(
             order_repo=OrderRepository(session_factory),
         )
         if heartbeat_enabled:
-            # ``components.notifier`` is the same instance the on_signal
-            # callback uses, so the heartbeat reuses the existing aiohttp
-            # session and rate-limit accounting.
             on_heartbeat = components.notifier.send_heartbeat
             heartbeat_arg = float(heartbeat_interval_seconds)
     elif heartbeat_enabled:
-        # The Live tab disables the checkbox when Discord isn't configured,
-        # but a careful operator could still flip it via URL state — fail
-        # loudly rather than silently dropping heartbeats.
         raise gr.Error(
             "Heartbeat requires Discord to be configured. Set "
             "NOTIFY_DISCORD_ENABLED=true and NOTIFY_DISCORD_WEBHOOK_URL "
@@ -182,98 +207,122 @@ async def start_loop(
     set_active_loop(loop)
     await loop.start()
 
-    return _render_status(
-        loop.snapshot(),
-        engine_id=components.engine.engine_id,
-        mode=components.mode,
-        requested_mode=requested_mode,
+    log_event(
+        "live",
+        "warn" if components.mode == LiveMode.LIVE else "ok",
+        f"loop started in {components.mode.value.upper()} mode · {symbol} · "
+        f"{float(interval_seconds):.0f}s",
+    )
+    snapshot = loop.snapshot()
+    return (
+        _activity_html(snapshot),
+        _status_html(
+            snapshot,
+            engine_id=components.engine.engine_id,
+            mode=components.mode,
+            requested_mode=requested_mode,
+        ),
     )
 
 
-async def stop_loop() -> str:
+async def stop_loop() -> tuple[str, str]:
     """Signal the running loop to stop and await termination."""
     loop = get_active_loop()
     if loop is None:
-        return _render_status(None)
+        return _activity_html(None), _status_html(None)
     await loop.stop()
-    return _render_status(loop.snapshot())
+    log_event("live", "info", "loop stopped by operator")
+    snapshot = loop.snapshot()
+    return _activity_html(snapshot), _status_html(snapshot)
 
 
-def refresh_status() -> str:
+def refresh_status() -> tuple[str, str]:
     """Read the latest snapshot of the active loop."""
     loop = get_active_loop()
     if loop is None:
-        return _render_status(None)
-    return _render_status(loop.snapshot())
+        return _activity_html(None), _status_html(None)
+    snapshot = loop.snapshot()
+    return _activity_html(snapshot), _status_html(snapshot)
 
 
-def _render_status(
+# ----------------------------------------------------------------------
+# Status / activity rendering
+# ----------------------------------------------------------------------
+
+
+def _activity_html(state: LiveLoopState | None) -> str:
+    if state is None:
+        pairs = [("Iterations", "0"), ("Signals", "0"), ("Executions", "0"), ("Errors", "0")]
+    else:
+        pairs = [
+            ("Iterations", str(state.iteration_count)),
+            ("Signals", str(state.signal_count)),
+            ("Executions", str(state.execution_count)),
+            ("Errors", str(state.error_count)),
+        ]
+    cells = "".join(components.stat_cell(label, value) for label, value in pairs)
+    return (
+        '<div class="ck-card"><div class="ck-card-title">Loop activity</div>'
+        f'<div class="ck-stats-row">{cells}</div></div>'
+    )
+
+
+def _status_html(
     state: LiveLoopState | None,
     *,
     engine_id: str | None = None,
     mode: LiveMode | None = None,
     requested_mode: LiveMode | None = None,
 ) -> str:
-    """Format a :class:`LiveLoopState` into a markdown status block."""
+    running = bool(state and state.running)
+    pill = (
+        '<span class="ck-pill-run">Running</span>'
+        if running
+        else '<span class="ck-pill-idle">Idle</span>'
+    )
     if state is None:
-        return "_No live loop has been started._"
-
-    rows: list[tuple[str, str]] = [
-        ("Status", "🟢 Running" if state.running else "⏹ Stopped"),
-        ("Symbol", state.symbol or "—"),
-        ("Strategy", state.strategy_name or "—"),
-        ("Interval", f"{state.interval_seconds:.0f}s"),
-    ]
-    if mode is not None:
-        if requested_mode is not None and requested_mode != mode:
-            rows.append(
-                (
-                    "Mode",
-                    f"**{mode.value}** "
-                    f"(requested {requested_mode.value} — credentials missing, "
-                    "fell back to paper)",
-                )
+        rows = components.kv_row("Status", "No loop started")
+    else:
+        mode_text = "—"
+        if mode is not None:
+            mode_text = mode.value
+            if requested_mode is not None and requested_mode != mode:
+                mode_text += f" (requested {requested_mode.value}, fell back)"
+        last_sig = "—"
+        if state.last_signal_type is not None:
+            when = (
+                state.last_signal_at.isoformat(timespec="seconds")
+                if state.last_signal_at is not None
+                else "—"
             )
-        else:
-            rows.append(("Mode", mode.value))
-    if engine_id is not None:
-        rows.append(("Engine ID", f"`{engine_id}`"))
-    if state.started_at is not None:
-        rows.append(("Started at", state.started_at.isoformat(timespec="seconds")))
-    if state.stopped_at is not None and not state.running:
-        rows.append(("Stopped at", state.stopped_at.isoformat(timespec="seconds")))
-    if state.last_iteration_at is not None:
-        rows.append(("Last iteration", state.last_iteration_at.isoformat(timespec="seconds")))
-    rows.append(("Iterations", str(state.iteration_count)))
-    rows.append(("Signals", str(state.signal_count)))
-    rows.append(("Executions", str(state.execution_count)))
-    if state.last_signal_type is not None:
-        last_sig = state.last_signal_at
-        when = last_sig.isoformat(timespec="seconds") if last_sig is not None else "—"
-        rows.append(("Last signal", f"{state.last_signal_type} at {when}"))
-    if state.error_count > 0:
-        rows.append(("Errors", str(state.error_count)))
-    if state.last_error is not None:
-        rows.append(("Last error", f"`{state.last_error}`"))
-
-    body = "\n".join(f"| {label} | {value} |" for label, value in rows)
+            last_sig = f"{state.last_signal_type} at {when}"
+        rows = "".join(
+            [
+                components.kv_row("Symbol", state.symbol or "—"),
+                components.kv_row("Strategy", state.strategy_name or "—"),
+                components.kv_row("Interval", f"{state.interval_seconds:.0f}s"),
+                components.kv_row("Mode", mode_text),
+                components.kv_row("Engine ID", engine_id or "—"),
+                components.kv_row("Last signal", last_sig),
+            ]
+        )
+        if state.last_error:
+            rows += components.kv_row("Last error", state.last_error)
     return (
-        f"_Last refreshed at {datetime.now(UTC).isoformat(timespec='seconds')}._\n\n"
-        "| Field | Value |\n"
-        "| --- | --- |\n"
-        f"{body}\n"
+        '<div class="ck-card"><div style="display:flex;justify-content:space-between;'
+        'align-items:center;margin-bottom:10px">'
+        '<span class="ck-section-label">Loop status</span>'
+        f"{pill}</div>{rows}</div>"
     )
 
 
-async def test_discord(_: object = None) -> str:
-    """Send a synthetic notification to the configured Discord webhook.
+# ----------------------------------------------------------------------
+# Diagnostics handlers (Discord / connection / pre-flight)
+# ----------------------------------------------------------------------
 
-    Surfaced as the "Test Discord notification" button so the operator
-    can verify the webhook is wired up before going live. The trade
-    path swallows webhook errors silently (intentionally — a noisy
-    webhook shouldn't break trading), so this dedicated probe is the
-    only place the operator gets to see the actual HTTP response.
-    """
+
+async def test_discord(_: object = None) -> str:
+    """Send a synthetic notification to the configured Discord webhook."""
     runtime = get_runtime()
     notifications = runtime.settings.notifications
     if not notifications.discord_enabled:
@@ -296,32 +345,18 @@ async def test_discord(_: object = None) -> str:
     if result.ok:
         return (
             f"✅ **Webhook OK** ({result.status}). Check your Discord channel — "
-            "you should see a 'Cryptrink test notification' embed. If you don't, "
-            "the webhook is delivering to a different channel than you expect."
+            "you should see a 'Cryptrink test notification' embed."
         )
     return (
         f"❌ **Webhook failed** (HTTP {result.status}).\n\n"
         f"```\n{result.detail}\n```\n\n"
-        "Common causes:\n"
-        "- 401/403: webhook was revoked or you pasted a Slack-shaped URL.\n"
-        "- 404: the webhook was deleted on the Discord side.\n"
-        "- Network error: HF Space cannot reach `discord.com` (rare).\n"
-        "Re-issue the webhook from Discord → Server Settings → Integrations "
-        "and update the Space secret."
+        "Common causes: 401/403 (revoked webhook or Slack-shaped URL), 404 "
+        "(deleted webhook), or a network error reaching `discord.com`."
     )
 
 
 async def preflight_order(dataset_value: str | None, initial_balance: float) -> str:
-    """Look up Revolut X pair limits and check the planned order would clear them.
-
-    The Live loop's first BUY allocates ``balance * max_position_size_pct``
-    of the quote currency. Revolut X enforces ``min_order_size`` (in the
-    base) and ``min_order_size_quote`` (in the quote) per pair --
-    ``allocation = 1 EUR`` against a high-priced pair is dust the exchange
-    rejects with an unhelpful generic error. This pre-flight surfaces
-    the rejection in cryptrink with the exact constraint that fails, so
-    the operator knows which knob to turn.
-    """
+    """Look up Revolut X pair limits and check the planned order would clear them."""
     if not dataset_value:
         return "_Pick a dataset first._"
     try:
@@ -374,64 +409,47 @@ async def preflight_order(dataset_value: str | None, initial_balance: float) -> 
         with contextlib.suppress(Exception):
             await exchange.close()
 
-    # Compute the allocation the live loop would request on its first BUY.
     risk = runtime.settings.risk
     max_pct = Decimal(str(risk.max_position_size_pct))
     balance = Decimal(str(initial_balance))
-    notional = balance * max_pct  # in the quote currency
+    notional = balance * max_pct
     if current_price <= 0:
         return f"❌ **Invalid current price** ({current_price}) for {symbol}."
     quantity = notional / current_price
 
     rows = [
         ("Symbol", info.symbol),
-        ("Status", info.status),
         ("Current price", f"{current_price} {info.quote}"),
-        ("Configured balance", f"{balance} {info.quote}"),
-        ("max_position_size_pct", f"{max_pct * 100}%"),
         ("Planned allocation", f"≈ {notional} {info.quote}"),
         ("Planned quantity", f"≈ {quantity} {info.base}"),
         ("min_order_size", f"{info.min_order_size} {info.base}"),
         ("min_order_size_quote", f"{info.min_order_size_quote} {info.quote}"),
-        ("max_order_size", f"{info.max_order_size} {info.base}"),
-        ("base_step", f"{info.base_step} {info.base}"),
     ]
     body = "\n".join(f"| {label} | {value} |" for label, value in rows)
     table = "| Field | Value |\n| --- | --- |\n" + body
 
     reason = info.reject_reason(quantity=quantity, notional=notional)
     if reason is None:
-        verdict = (
-            f"✅ **Order would clear all minimums** for `{symbol}`. The first "
-            f"BUY the live loop emits will request ~{quantity} {info.base} "
-            f"(~{notional} {info.quote})."
-        )
+        verdict = f"✅ **Order would clear all minimums** for `{symbol}`."
     else:
         verdict = (
             f"❌ **Order would be rejected:** {reason}.\n\n"
-            "Fixes:\n"
-            f"- Raise `RISK_MAX_POSITION_SIZE_PCT` so the allocation clears the minimum.\n"
-            f"- Pick a lower-priced pair (e.g. an asset already in your wallet).\n"
-            f"- Top up the {info.quote} balance so a smaller percentage still clears."
+            "Raise `RISK_MAX_POSITION_SIZE_PCT`, pick a lower-priced pair, or top up "
+            f"the {info.quote} balance."
         )
 
     return f"{verdict}\n\n{table}"
 
 
 async def test_connection(symbol: str) -> str:
-    """Probe Revolut X with a read-only ticker + balances call.
+    """Probe Revolut X with a read-only ticker + balances call. No orders are placed.
 
-    Wired to the Test connection button. Builds a one-shot
-    :class:`RevolutXExchange`, connects, fetches the ticker for the
-    operator-supplied symbol and the account balances, then closes the
-    connection. **No orders are placed.**
-
-    Catches both signing/connection errors and per-call API errors so
-    each failure surfaces in the UI as a friendly :class:`gr.Error` with
-    the underlying message instead of a server-side traceback.
+    Accepts either a bare symbol (``BTC-EUR``) or a Dataset value (``BTC-EUR|1h``).
     """
     if not symbol:
-        raise gr.Error("Enter a symbol to probe (e.g. BTC-EUR).")
+        raise gr.Error("Select a dataset to probe (e.g. BTC-EUR).")
+    if "|" in symbol:
+        symbol = symbol.split("|", 1)[0]
 
     runtime = get_runtime()
     if not has_revolutx_credentials(runtime.settings):
@@ -466,7 +484,6 @@ async def test_connection(symbol: str) -> str:
         except Exception as exc:
             raise gr.Error(f"get_ticker({symbol}) failed: {type(exc).__name__}: {exc}") from exc
 
-        balance_summary: str
         try:
             balances = await exchange.get_balances()
         except Exception as exc:
@@ -503,8 +520,22 @@ async def test_connection(symbol: str) -> str:
     )
 
 
+# ----------------------------------------------------------------------
+# Render
+# ----------------------------------------------------------------------
+
+# Browser confirm that gates Start in live mode. Live mode is detected via the banner's
+# semantic ``.ck-banner-live`` class (server-set), not a button label. Throwing cancels
+# the Gradio event.
+_START_CONFIRM_JS = (
+    "() => { if (document.querySelector('.ck-banner-live')) {"
+    " if (!confirm('Start LIVE loop? Real orders will be placed on Revolut X "
+    "with account funds until you press Stop.')) throw new Error('cancelled'); } }"
+)
+
+
 def render() -> None:
-    """Render the Live tab UI inside an enclosing :class:`gr.Tabs`."""
+    """Render the Live screen panel inside the workspace shell."""
     runtime = get_runtime()
     strategy_options = strategy_registry.list_strategies()
     default_strategy = (
@@ -513,165 +544,119 @@ def render() -> None:
         else (strategy_options[0] if strategy_options else None)
     )
     creds_present = has_revolutx_credentials(runtime.settings)
-    default_mode = LiveMode.PAPER.value
-    if creds_present:
-        mode_choices = [LiveMode.PAPER.value, LiveMode.LIVE.value]
-        mode_info = "Live mode places real orders on Revolut X."
-        cred_hint = "_Revolut X credentials detected — Live mode will place real orders._"
-    else:
-        # Hide Live entirely when creds are missing. Gradio's Radio doesn't
-        # support per-choice disabling, so omitting is the cleanest way to
-        # convey "not available right now". The info hint explains why.
-        mode_choices = [LiveMode.PAPER.value]
-        mode_info = (
-            "Set REVOLUTX_API_KEY and REVOLUTX_PRIVATE_KEY (or "
-            "REVOLUTX_PRIVATE_KEY_PATH) in the environment to unlock Live mode."
-        )
-        cred_hint = "_No Revolut X credentials in env; Live mode is hidden until they are set._"
+    discord_configured = runtime.settings.notifications.discord_enabled and bool(
+        runtime.settings.notifications.discord_webhook_url.get_secret_value()
+    )
 
-    with gr.Tab("Live"):
-        gr.Markdown(
-            "Run a strategy on a periodic interval. Each tick fetches the latest "
-            "candle, generates a signal, and routes it through risk validation and "
-            "the configured executor. **Paper** mode replays signals against the "
-            "stored OHLCV in the configured database; **Live** mode places real "
-            "orders on Revolut X (requires REVOLUTX_API_KEY + REVOLUTX_PRIVATE_KEY "
-            "in the environment).\n\nThe Dataset dropdown lists what's actually "
-            "in the OHLCV table — the strategy's preferred timeframe must match "
-            "the selected dataset so the loop fetches the right candles.\n\n" + cred_hint
-        )
-        with gr.Row():
-            strategy_input = gr.Dropdown(
-                choices=strategy_options,
-                value=default_strategy,
-                label="Strategy",
-            )
-            # See backtest.py for why we pre-populate synchronously and
-            # set allow_custom_value=True (Gradio SSR mode rejects
-            # otherwise-valid values when server-side ``choices`` is empty
-            # at render time, even after an async refresh).
-            initial_datasets = list_datasets_sync()
-            initial_choices = [(ds.label, ds.value) for ds in initial_datasets]
-            initial_value = initial_choices[0][1] if initial_choices else None
-            dataset_input = gr.Dropdown(
-                choices=initial_choices,
-                value=initial_value,
-                label="Dataset (symbol @ timeframe)",
-                allow_custom_value=True,
-            )
-            refresh_datasets_btn = gr.Button("Refresh datasets", variant="secondary")
-        with gr.Row():
-            interval_input = gr.Number(value=60.0, label="Interval (seconds)", minimum=1)
-            balance_input = gr.Number(value=10000.0, label="Initial paper balance (EUR)")
-            mode_input = gr.Radio(
-                choices=mode_choices,
-                value=default_mode,
-                label="Mode",
-                info=mode_info,
-            )
+    initial_datasets = list_datasets_sync()
+    initial_choices = [(ds.label, ds.value) for ds in initial_datasets]
+    initial_value = initial_choices[0][1] if initial_choices else None
 
-        # Heartbeat row. Disabled by default, and disabled (greyed out)
-        # entirely when Discord isn't configured — the operator gets a
-        # clear hint why instead of a silent no-op when they tick the box.
-        discord_configured = runtime.settings.notifications.discord_enabled and bool(
-            runtime.settings.notifications.discord_webhook_url.get_secret_value()
-        )
-        with gr.Row():
-            heartbeat_enabled_input = gr.Checkbox(
-                value=False,
-                label="Discord heartbeat",
-                info=(
-                    "Send a periodic 'I'm alive' status embed to Discord."
-                    if discord_configured
-                    else "Disabled — configure NOTIFY_DISCORD_ENABLED + "
-                    "NOTIFY_DISCORD_WEBHOOK_URL in Space secrets first."
-                ),
-                interactive=discord_configured,
-            )
-            heartbeat_interval_input = gr.Number(
-                value=900.0,
-                label="Heartbeat interval (seconds)",
-                minimum=10,
-                info="900 = 15 min. Keep ≥ 60 to avoid Discord rate limits.",
-                interactive=discord_configured,
-            )
+    with gr.Row(elem_classes=["ck-screen-cols"]):
+        # ---- left: chart + activity ----
+        with gr.Column(elem_classes=["ck-col-main"]):
+            with gr.Group(elem_classes=["ck-card"]):
+                gr.HTML('<div class="ck-card-title">Price (stored candles)</div>')
+                chart_output = gr.Plot()
+            activity_output = gr.HTML(_activity_html(None))
 
-        with gr.Row():
-            start_btn = gr.Button("Start", variant="primary")
-            stop_btn = gr.Button("Stop", variant="stop")
-            refresh_btn = gr.Button("Refresh status")
-
-        status_output = gr.Markdown(value=refresh_status())
-
-        refresh_datasets_btn.click(
-            fn=refresh_datasets, inputs=[dataset_input], outputs=[dataset_input]
-        )
-        dataset_input.focus(fn=refresh_datasets, inputs=[dataset_input], outputs=[dataset_input])
-        start_btn.click(
-            fn=start_loop,
-            inputs=[
-                strategy_input,
-                dataset_input,
-                interval_input,
-                balance_input,
-                mode_input,
-                heartbeat_enabled_input,
-                heartbeat_interval_input,
-            ],
-            outputs=[status_output],
-        )
-        stop_btn.click(fn=stop_loop, inputs=[], outputs=[status_output])
-        refresh_btn.click(fn=refresh_status, inputs=[], outputs=[status_output])
-
-        if creds_present:
-            gr.Markdown(
-                "---\n\n"
-                "### Test live connection\n"
-                "Probe Revolut X with a read-only ticker + account-balance "
-                "call. **No orders are placed.** Run this once after adding "
-                "credentials to confirm signing and authentication work."
-            )
-            with gr.Row():
-                test_symbol_input = gr.Dropdown(
-                    choices=get_symbol_choices(),
-                    value=default_symbol(),
-                    label="Probe symbol",
-                    allow_custom_value=True,
-                    scale=2,
+        # ---- right: config + status ----
+        with gr.Column(scale=0, elem_classes=["ck-col-320"]):
+            with gr.Group(elem_classes=["ck-card"]):
+                gr.HTML('<div class="ck-section-label">Loop configuration</div>')
+                strategy_input = gr.Dropdown(
+                    choices=strategy_options, value=default_strategy, label="Strategy"
                 )
-                test_btn = gr.Button("Test live connection", variant="secondary")
-            test_output = gr.Markdown()
-            test_btn.click(
-                fn=test_connection,
-                inputs=[test_symbol_input],
-                outputs=[test_output],
-            )
+                dataset_input = gr.Dropdown(
+                    choices=initial_choices,
+                    value=initial_value,
+                    label="Dataset (symbol @ timeframe)",
+                    allow_custom_value=True,
+                )
+                with gr.Row():
+                    interval_input = gr.Number(value=60.0, label="Interval (s)", minimum=1)
+                    balance_input = gr.Number(value=10000.0, label="Paper balance (€)")
+                with gr.Accordion("Advanced · risk & notifications", open=False):
+                    risk = runtime.settings.risk
+                    gr.HTML(
+                        '<div class="ck-kv-row"><span style="color:var(--faint)">'
+                        "Max position size</span>"
+                        f'<span class="ck-mono">{float(risk.max_position_size_pct) * 100:.0f}%'
+                        "</span></div>"
+                    )
+                    heartbeat_enabled_input = gr.Checkbox(
+                        value=False,
+                        label="Discord heartbeat",
+                        info=(
+                            "Periodic 'I'm alive' embed to Discord."
+                            if discord_configured
+                            else "Configure NOTIFY_DISCORD_* in Space secrets first."
+                        ),
+                        interactive=discord_configured,
+                    )
+                    heartbeat_interval_input = gr.Number(
+                        value=900.0,
+                        label="Heartbeat interval (s)",
+                        minimum=10,
+                        interactive=discord_configured,
+                    )
+                with gr.Row():
+                    start_btn = gr.Button("Start", elem_classes=["ck-btn-primary"])
+                    stop_btn = gr.Button("Stop", elem_classes=["ck-btn-stop"])
+                if creds_present:
+                    with gr.Row():
+                        test_btn = gr.Button("Test connection", elem_classes=["ck-btn-secondary"])
+                        preflight_btn = gr.Button("Pre-flight", elem_classes=["ck-btn-secondary"])
 
-            gr.Markdown(
-                "---\n\n"
-                "### Pre-flight order check\n"
-                "Look up the selected pair's `min_order_size` / "
-                "`min_order_size_quote` from Revolut X's `/configuration/pairs`, "
-                "then compare against the order the live loop would place "
-                "(balance * `RISK_MAX_POSITION_SIZE_PCT` / current price). "
-                "Surfaces 'this order would be rejected as dust' before you hit Start."
-            )
-            preflight_btn = gr.Button("Run pre-flight check", variant="secondary")
-            preflight_output = gr.Markdown()
-            preflight_btn.click(
-                fn=preflight_order,
-                inputs=[dataset_input, balance_input],
-                outputs=[preflight_output],
-            )
+            _, initial_status = refresh_status()
+            status_output = gr.HTML(initial_status)
 
-        gr.Markdown(
-            "---\n\n"
-            "### Test Discord notification\n"
-            "Send a synthetic embed to the configured webhook so you can "
-            "verify trade alerts will land on your phone before you go live. "
-            "Surfaces the exact HTTP status if the webhook is misconfigured "
-            "(401/403 from a revoked webhook, 404 from a deleted webhook, etc.)."
+    # diagnostics output (spans below the columns; only meaningful with creds/Discord)
+    diag_output = gr.Markdown(visible=False)
+
+    # ---- wiring ----
+    dataset_input.change(fn=load_candle_chart, inputs=[dataset_input], outputs=[chart_output])
+    dataset_input.focus(fn=refresh_datasets, inputs=[dataset_input], outputs=[dataset_input])
+
+    # Auto-refresh while the Live screen is open: loop status/activity from the
+    # in-memory snapshot (cheap, 3s) and the candlestick from stored OHLCV (DB read,
+    # 6s — also fills the chart shortly after the screen is opened). Both no-op when
+    # Live isn't the visible screen so they don't poll in the background.
+    def _status_tick() -> tuple[object, object]:
+        if get_active_screen() != "live":
+            return gr.update(), gr.update()
+        return refresh_status()
+
+    status_timer = gr.Timer(3.0)
+    status_timer.tick(fn=_status_tick, inputs=None, outputs=[activity_output, status_output])
+
+    async def _chart_tick(dataset_value: str | None) -> object:
+        if get_active_screen() != "live":
+            return gr.update()
+        return await load_candle_chart(dataset_value)
+
+    chart_timer = gr.Timer(6.0)
+    chart_timer.tick(fn=_chart_tick, inputs=[dataset_input], outputs=[chart_output])
+
+    start_btn.click(
+        fn=start_loop,
+        inputs=[
+            strategy_input,
+            dataset_input,
+            interval_input,
+            balance_input,
+            heartbeat_enabled_input,
+            heartbeat_interval_input,
+        ],
+        outputs=[activity_output, status_output],
+        js=_START_CONFIRM_JS,
+    )
+    stop_btn.click(fn=stop_loop, inputs=[], outputs=[activity_output, status_output])
+
+    if creds_present:
+        test_btn.click(fn=test_connection, inputs=[dataset_input], outputs=[diag_output]).then(
+            fn=lambda: gr.update(visible=True), outputs=[diag_output]
         )
-        discord_btn = gr.Button("Test Discord notification", variant="secondary")
-        discord_output = gr.Markdown()
-        discord_btn.click(fn=test_discord, inputs=[], outputs=[discord_output])
+        preflight_btn.click(
+            fn=preflight_order, inputs=[dataset_input, balance_input], outputs=[diag_output]
+        ).then(fn=lambda: gr.update(visible=True), outputs=[diag_output])

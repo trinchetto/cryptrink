@@ -1,15 +1,13 @@
-"""Suggest tab for the Cryptrink Gradio web app.
+"""Suggest screen for the Cryptrink workspace UI.
 
 Generates a one-shot trade suggestion against a stored OHLCV
-``(symbol, timeframe)`` dataset — picked from the same DB-driven Dataset
-dropdown the Backtest and Live tabs use, so all three tabs agree on what
-"the data" is. Setting up the suggestion path on a timeframe the
-database doesn't actually have produces an immediate, friendly error
-rather than a silent empty result.
+``(symbol, timeframe)`` dataset and renders it as a BUY/SELL/HOLD verdict card.
+No order is placed.
 """
 
 from __future__ import annotations
 
+import html
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -24,6 +22,7 @@ from cryptrink.execution.suggest import SuggestExecutor
 from cryptrink.runtime import resolve_strategy
 from cryptrink.strategies import registry as strategy_registry
 from cryptrink.strategies.base import StrategyContext
+from cryptrink.web import components
 from cryptrink.web.state import Dataset, get_runtime, list_datasets, list_datasets_sync
 
 # ----------------------------------------------------------------------
@@ -148,12 +147,56 @@ async def run_suggest(strategy_name: str, dataset_value: str | None) -> dict[str
 
 
 # ----------------------------------------------------------------------
+# Verdict card rendering
+# ----------------------------------------------------------------------
+
+
+def _verdict(signal_type: str) -> tuple[str, str]:
+    """Map a raw signal-type value to a (label, tone) verdict."""
+    value = signal_type.lower()
+    if "long" in value or value == "buy":
+        return "BUY", "pos"
+    if "short" in value or value == "sell":
+        return "SELL", "neg"
+    return "HOLD", "dim"
+
+
+def suggestion_card_html(result: dict[str, object]) -> str:
+    """Render the suggestion result as a verdict card."""
+    label, tone = _verdict(str(result.get("signal_type", "")))
+    tone_cls = components.TONE_CLASS.get(tone, "")
+    rows = [
+        ("Symbol", str(result.get("symbol", "—"))),
+        ("Timeframe", str(result.get("timeframe", "—"))),
+        ("Signal", str(result.get("signal_type", "—"))),
+        ("Strength", str(result.get("signal_strength", "—"))),
+        ("Current price", f"€{result.get('current_price', '—')}"),
+        ("Candles used", str(result.get("candles_used", "—"))),
+    ]
+    grid = "".join(components.kv_row(k, v) for k, v in rows)
+    badge = html.escape(str(result.get("signal_strength", "")))
+    return (
+        '<div class="ck-card">'
+        '<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">'
+        f'<span class="ck-verdict {tone_cls}">{label}</span>'
+        f'<span class="ck-badge" style="background:var(--surface2)">{badge}</span></div>'
+        f"{grid}</div>"
+    )
+
+
+async def suggest_and_render(strategy_name: str, dataset_value: str | None) -> str:
+    """Run a suggestion and render it as a verdict card (errors surface as gr.Error)."""
+    result = await run_suggest(strategy_name, dataset_value)
+    return suggestion_card_html(result)
+
+
+# ----------------------------------------------------------------------
 # Render
 # ----------------------------------------------------------------------
 
 
 def render() -> None:
-    """Render the Suggest tab UI inside an enclosing :class:`gr.Tabs`."""
+    """Render the Suggest screen panel inside the workspace shell."""
     runtime = get_runtime()
     strategy_options = strategy_registry.list_strategies()
     default_strategy = (
@@ -161,40 +204,29 @@ def render() -> None:
         if runtime.settings.default_strategy in strategy_options
         else (strategy_options[0] if strategy_options else None)
     )
-    with gr.Tab("Suggest"):
-        gr.Markdown(
-            "Generate a one-shot trade suggestion from the latest stored candle. "
-            "No order is placed. The Dataset dropdown lists what is actually in "
-            "the database — open the Data tab and run Backfill if it's empty, "
-            "then click Refresh datasets here."
-        )
-        with gr.Row():
+    initial_datasets = list_datasets_sync()
+    initial_choices = [(ds.label, ds.value) for ds in initial_datasets]
+    initial_value = initial_choices[0][1] if initial_choices else None
+
+    with gr.Column(elem_classes=["ck-col-main"]):
+        with gr.Group(elem_classes=["ck-card"]), gr.Row():
             strategy_input = gr.Dropdown(
-                choices=strategy_options,
-                value=default_strategy,
-                label="Strategy",
+                choices=strategy_options, value=default_strategy, label="Strategy"
             )
-            # See backtest.py for why we pre-populate synchronously and
-            # set allow_custom_value=True (Gradio SSR mode rejects
-            # otherwise-valid values when server-side ``choices`` is empty
-            # at render time, even after an async refresh).
-            initial_datasets = list_datasets_sync()
-            initial_choices = [(ds.label, ds.value) for ds in initial_datasets]
-            initial_value = initial_choices[0][1] if initial_choices else None
+            # Pre-populate synchronously + allow_custom_value=True (Gradio SSR
+            # rejects otherwise-valid values when server-side choices is empty).
             dataset_input = gr.Dropdown(
                 choices=initial_choices,
                 value=initial_value,
                 label="Dataset (symbol @ timeframe)",
                 allow_custom_value=True,
             )
-            refresh_btn = gr.Button("Refresh datasets", variant="secondary")
-        run_btn = gr.Button("Suggest", variant="primary")
-        result_output = gr.JSON(label="Suggestion")
+            run_btn = gr.Button("Suggest", elem_classes=["ck-btn-primary"])
+        result_output = gr.HTML()
 
-        refresh_btn.click(fn=refresh_datasets, inputs=[dataset_input], outputs=[dataset_input])
-        dataset_input.focus(fn=refresh_datasets, inputs=[dataset_input], outputs=[dataset_input])
-        run_btn.click(
-            fn=run_suggest,
-            inputs=[strategy_input, dataset_input],
-            outputs=[result_output],
-        )
+    dataset_input.focus(fn=refresh_datasets, inputs=[dataset_input], outputs=[dataset_input])
+    run_btn.click(
+        fn=suggest_and_render,
+        inputs=[strategy_input, dataset_input],
+        outputs=[result_output],
+    )

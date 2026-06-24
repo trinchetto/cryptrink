@@ -51,6 +51,7 @@ from cryptrink.web.state import (
     get_runtime,
     list_datasets,
     list_datasets_sync,
+    log_event,
 )
 from cryptrink.web.tabs.backtest_tuning import (
     ManualPanel,
@@ -92,10 +93,29 @@ def _now() -> str:
     return datetime.now(UTC).strftime("%H:%M:%S")
 
 
+def _level_for(message: str) -> str:
+    """Classify a log line into a terminal level (ok | info | warn | err).
+
+    The shared docked terminal colours messages by level. We derive the
+    level from the message markers the run handler already emits so every
+    ``_emit`` call mirrors at the right colour without touching call sites.
+    """
+    if message.startswith("FAILED"):
+        return "err"
+    if "COMPLETE" in message:
+        return "ok"
+    if "WARNING" in message:
+        return "warn"
+    return "info"
+
+
 def _emit(message: str) -> str:
     _LOG.append(f"[{_now()}] {message}")
     if len(_LOG) > _LOG_MAX_LINES:
         del _LOG[: len(_LOG) - _LOG_MAX_LINES]
+    # Mirror into the shared docked terminal so the global log carries every
+    # backtest step alongside the per-tab buffer the run handler still yields.
+    log_event("backtest", _level_for(message), message)
     return _render_terminal()
 
 
@@ -705,62 +725,57 @@ def render() -> None:
         else (strategy_options[0] if strategy_options else None)
     )
 
-    with gr.Tab("Backtest"):
-        gr.Markdown(
-            "Replay a strategy over a stored OHLCV ``(symbol, timeframe)`` group. "
-            "The Dataset dropdown lists what is actually persisted in the database "
-            "— if it's empty, open the Data tab and run Backfill first.\n\n"
-            "Tune parameters by hand in the **Strategy parameters** accordion, or "
-            "let **Auto-tuning** sweep them with grid search or Optuna's TPE sampler "
-            "and pick the combination that maximises the objective you choose.\n\n"
-            "The terminal at the bottom logs every step of the run, including the "
-            "histogram of signals the strategy emitted, so you can tell whether "
-            "the strategy is firing entries at all."
-        )
+    # Read the OHLCV summary synchronously so the dropdown lands populated.
+    # Gradio's SSR mode rejects submitted values when the server-side
+    # ``choices`` list is empty — even after a later async refresh the
+    # validator still sees the original render-time choices and bounces the
+    # value before any handler can run. ``allow_custom_value=True`` is also
+    # kept as a belt-and-braces fallback; the run handler always validates
+    # via ``Dataset.parse``.
+    initial_datasets = list_datasets_sync()
+    initial_choices = [(ds.label, ds.value) for ds in initial_datasets]
+    initial_value = initial_choices[0][1] if initial_choices else None
 
-        with gr.Row():
-            strategy_input = gr.Dropdown(
-                choices=strategy_options,
-                value=default_strategy,
-                label="Strategy",
-            )
-            # Read the OHLCV summary synchronously so the dropdown lands
-            # populated. Gradio's SSR mode rejects submitted values when
-            # the server-side ``choices`` list is empty — even after a
-            # later async refresh the validator still sees the original
-            # render-time choices and bounces the value before any
-            # handler can run. ``allow_custom_value=True`` is also kept
-            # as a belt-and-braces fallback; the run handler always
-            # validates via ``Dataset.parse``.
-            initial_datasets = list_datasets_sync()
-            initial_choices = [(ds.label, ds.value) for ds in initial_datasets]
-            initial_value = initial_choices[0][1] if initial_choices else None
-            dataset_input = gr.Dropdown(
-                choices=initial_choices,
-                value=initial_value,
-                label="Dataset (symbol @ timeframe)",
-                allow_custom_value=True,
-            )
-            refresh_datasets_btn = gr.Button("Refresh datasets", variant="secondary")
+    with gr.Row(elem_classes=["ck-screen-cols"]):
+        # ---- left: run configuration ----
+        with gr.Column(scale=0, elem_classes=["ck-col-300"]):
+            with gr.Group(elem_classes=["ck-card"]):
+                gr.HTML('<div class="ck-section-label">Configuration</div>')
+                strategy_input = gr.Dropdown(
+                    choices=strategy_options,
+                    value=default_strategy,
+                    label="Strategy",
+                )
+                dataset_input = gr.Dropdown(
+                    choices=initial_choices,
+                    value=initial_value,
+                    label="Dataset (symbol @ timeframe)",
+                    allow_custom_value=True,
+                )
+                start_input = gr.Textbox(value="2024-01-01", label="Start (YYYY-MM-DD)")
+                end_input = gr.Textbox(value="", label="End (YYYY-MM-DD, blank = now)")
+                capital_input = gr.Number(value=10000.0, label="Initial capital (EUR)")
+                with gr.Row():
+                    run_btn = gr.Button("Run backtest", elem_classes=["ck-btn-primary"])
+                    clear_log_btn = gr.Button("Clear log", elem_classes=["ck-btn-secondary"])
+                # Auto-populated on focus/change; kept hidden so the workspace
+                # has no manual refresh button (read refreshes are automatic).
+                refresh_datasets_btn = gr.Button(
+                    "Refresh datasets", elem_classes=["ck-btn-secondary"], visible=False
+                )
 
-        with gr.Row():
-            start_input = gr.Textbox(value="2024-01-01", label="Start (YYYY-MM-DD)")
-            end_input = gr.Textbox(value="", label="End (YYYY-MM-DD, blank = now)")
-            capital_input = gr.Number(value=10000.0, label="Initial capital (EUR)")
+            with gr.Accordion("Strategy parameters", open=False):
+                global _manual_panels
+                _manual_panels = render_manual_panels(strategy_options, default_strategy)
+            manual_components = flatten_components(_manual_panels)
 
-        with gr.Accordion("Strategy parameters", open=True):
-            global _manual_panels
-            _manual_panels = render_manual_panels(strategy_options, default_strategy)
-        manual_components = flatten_components(_manual_panels)
-
-        with gr.Accordion("Auto-tuning", open=False):
-            gr.Markdown(
-                "Sweep one or more parameters and pick the combination that "
-                "maximises the chosen objective. Tuned parameters override "
-                "the manual values above for each trial; untuned parameters "
-                "keep their manual value."
-            )
-            with gr.Row():
+            with gr.Accordion("Auto-tuning", open=False):
+                gr.Markdown(
+                    "Sweep one or more parameters and pick the combination that "
+                    "maximises the chosen objective. Tuned parameters override "
+                    "the manual values above for each trial; untuned parameters "
+                    "keep their manual value."
+                )
                 opt_mode_input = gr.Radio(
                     choices=[("Grid search", "grid"), ("Optuna TPE", "tpe")],
                     value="grid",
@@ -779,121 +794,129 @@ def render() -> None:
                     label="TPE trials (ignored for grid)",
                 )
 
-            global _tuning_panels
-            _tuning_panels = render_tuning_panels(strategy_options, default_strategy)
-            tuning_components = flatten_components(_tuning_panels)
+                global _tuning_panels
+                _tuning_panels = render_tuning_panels(strategy_options, default_strategy)
+                tuning_components = flatten_components(_tuning_panels)
 
-            with gr.Row():
-                run_opt_btn = gr.Button("Run optimization", variant="primary")
-                apply_best_btn = gr.Button("Apply best to manual", variant="secondary")
-            opt_summary_md = gr.Markdown(
-                value="_Run an optimisation to see the best parameters here._"
-            )
-            opt_trials_df = gr.Dataframe(
-                value=empty_trials_df(),
-                label="Top trials (sorted by objective)",
-            )
-            # Holds the most recent OptimizationResult so "Apply best"
-            # can push best_params back into the manual inputs without
-            # re-running the sweep.
-            opt_result_state = gr.State(value=None)
+                with gr.Row():
+                    run_opt_btn = gr.Button("Run optimization", elem_classes=["ck-btn-primary"])
+                    apply_best_btn = gr.Button(
+                        "Apply best to manual", elem_classes=["ck-btn-secondary"]
+                    )
+                opt_summary_md = gr.Markdown(
+                    value="_Run an optimisation to see the best parameters here._"
+                )
+                opt_trials_df = gr.Dataframe(
+                    value=empty_trials_df(),
+                    label="Top trials (sorted by objective)",
+                )
+                # Holds the most recent OptimizationResult so "Apply best"
+                # can push best_params back into the manual inputs without
+                # re-running the sweep.
+                opt_result_state = gr.State(value=None)
 
-        with gr.Row():
-            run_btn = gr.Button("Run backtest", variant="primary")
-            clear_log_btn = gr.Button("Clear log")
+        # ---- right: result metrics + charts + trades ----
+        with gr.Column(elem_classes=["ck-col-main"]):
+            with gr.Group(elem_classes=["ck-card"]):
+                gr.HTML('<div class="ck-card-title">Result metrics</div>')
+                summary_output = gr.Markdown(value=_NO_DATASET_NOTICE)
 
-        gr.Markdown("### Result")
-        summary_output = gr.Markdown(value=_NO_DATASET_NOTICE)
+            # ``gr.Plot`` renders a matplotlib Figure as an image: date-only
+            # x-axis labels, no broken JS tooltips, no upside-down y-axis. The
+            # cost is no live cursor, but the figure is small enough to read at
+            # a glance and the trades / summary tables carry the precise numbers.
+            with gr.Group(elem_classes=["ck-card"]):
+                gr.HTML('<div class="ck-card-title">Equity curve</div>')
+                equity_output = gr.Plot()
+            with gr.Group(elem_classes=["ck-card"]):
+                gr.HTML('<div class="ck-card-title">Close price (data the strategy saw)</div>')
+                candle_output = gr.Plot()
+            with gr.Group(elem_classes=["ck-card"]):
+                gr.HTML('<div class="ck-card-title">Closed trades</div>')
+                trades_output = gr.Dataframe()
 
-        # ``gr.Plot`` renders a matplotlib Figure as an image: date-only
-        # x-axis labels, no broken JS tooltips, no upside-down y-axis. The
-        # cost is no live cursor, but the figure is small enough to read at
-        # a glance and the trades / summary tables carry the precise numbers.
-        with gr.Row():
-            equity_output = gr.Plot(label="Equity curve")
-            candle_output = gr.Plot(label="Close price (data the strategy saw)")
-        trades_output = gr.Dataframe(label="Closed trades")
+    # ``run_backtest`` still yields a terminal markdown string at position 1
+    # of its 5-tuple; route it into a hidden component so the per-tab buffer
+    # has a sink while the visible log lives in the shared docked terminal.
+    terminal = gr.Markdown(value=_render_terminal(), visible=False)
 
-        gr.Markdown("### Terminal")
-        terminal = gr.Markdown(value=_render_terminal())
+    # Auto-populate the dataset dropdown on tab load. ``demo.load`` would
+    # be cleaner but it lives on the parent Blocks; instead we trigger
+    # the same refresh whenever the strategy changes (which the operator
+    # always does first) and via the explicit Refresh button.
+    refresh_datasets_btn.click(
+        fn=refresh_datasets,
+        inputs=[dataset_input],
+        outputs=[dataset_input, terminal],
+    )
+    # Lazy-populate on first focus too: when the dropdown is first
+    # focused, refresh if it is empty. Gradio doesn't expose a direct
+    # "on first interaction" event, but `select` fires on open; using
+    # it with `current=None` does the right thing.
+    dataset_input.focus(
+        fn=refresh_datasets,
+        inputs=[dataset_input],
+        outputs=[dataset_input, terminal],
+    )
+    # Snap Start / End to the dataset's full range whenever the
+    # operator picks a new dataset — that's the default they want
+    # 99% of the time. Manual narrowing still wins because they can
+    # edit the textboxes after.
+    dataset_input.change(
+        fn=autofill_dates,
+        inputs=[dataset_input],
+        outputs=[start_input, end_input],
+    )
 
-        # Auto-populate the dataset dropdown on tab load. ``demo.load`` would
-        # be cleaner but it lives on the parent Blocks; instead we trigger
-        # the same refresh whenever the strategy changes (which the operator
-        # always does first) and via the explicit Refresh button.
-        refresh_datasets_btn.click(
-            fn=refresh_datasets,
-            inputs=[dataset_input],
-            outputs=[dataset_input, terminal],
-        )
-        # Lazy-populate on first focus too: when the dropdown is first
-        # focused, refresh if it is empty. Gradio doesn't expose a direct
-        # "on first interaction" event, but `select` fires on open; using
-        # it with `current=None` does the right thing.
-        dataset_input.focus(
-            fn=refresh_datasets,
-            inputs=[dataset_input],
-            outputs=[dataset_input, terminal],
-        )
-        # Snap Start / End to the dataset's full range whenever the
-        # operator picks a new dataset — that's the default they want
-        # 99% of the time. Manual narrowing still wins because they can
-        # edit the textboxes after.
-        dataset_input.change(
-            fn=autofill_dates,
-            inputs=[dataset_input],
-            outputs=[start_input, end_input],
-        )
+    # Strategy change → toggle which manual + tuning panel is visible.
+    # Both panel sets share the same strategy axis; we update them
+    # in a single callback by concatenating the updates.
+    manual_groups = [panel.group for panel in _manual_panels.values()]
+    tuning_groups = [panel.group for panel in _tuning_panels.values()]
 
-        # Strategy change → toggle which manual + tuning panel is visible.
-        # Both panel sets share the same strategy axis; we update them
-        # in a single callback by concatenating the updates.
-        manual_groups = [panel.group for panel in _manual_panels.values()]
-        tuning_groups = [panel.group for panel in _tuning_panels.values()]
+    def _on_strategy_change(strategy_name: str) -> list[object]:
+        manual_updates = visibility_updates(strategy_name, _manual_panels)
+        tuning_updates = visibility_updates(strategy_name, _tuning_panels)
+        return [*manual_updates, *tuning_updates]
 
-        def _on_strategy_change(strategy_name: str) -> list[object]:
-            manual_updates = visibility_updates(strategy_name, _manual_panels)
-            tuning_updates = visibility_updates(strategy_name, _tuning_panels)
-            return [*manual_updates, *tuning_updates]
+    strategy_input.change(
+        fn=_on_strategy_change,
+        inputs=[strategy_input],
+        outputs=[*manual_groups, *tuning_groups],
+    )
 
-        strategy_input.change(
-            fn=_on_strategy_change,
-            inputs=[strategy_input],
-            outputs=[*manual_groups, *tuning_groups],
-        )
+    run_btn.click(
+        fn=run_backtest,
+        inputs=[
+            strategy_input,
+            dataset_input,
+            start_input,
+            end_input,
+            capital_input,
+            *manual_components,
+        ],
+        outputs=[summary_output, terminal, equity_output, candle_output, trades_output],
+    )
+    clear_log_btn.click(fn=clear_log, inputs=[], outputs=[terminal])
 
-        run_btn.click(
-            fn=run_backtest,
-            inputs=[
-                strategy_input,
-                dataset_input,
-                start_input,
-                end_input,
-                capital_input,
-                *manual_components,
-            ],
-            outputs=[summary_output, terminal, equity_output, candle_output, trades_output],
-        )
-        clear_log_btn.click(fn=clear_log, inputs=[], outputs=[terminal])
-
-        run_opt_btn.click(
-            fn=run_optimization,
-            inputs=[
-                strategy_input,
-                dataset_input,
-                start_input,
-                end_input,
-                capital_input,
-                opt_mode_input,
-                opt_objective_input,
-                opt_n_trials_input,
-                *manual_components,
-                *tuning_components,
-            ],
-            outputs=[opt_summary_md, terminal, opt_trials_df, opt_result_state],
-        )
-        apply_best_btn.click(
-            fn=apply_best_params,
-            inputs=[strategy_input, opt_result_state],
-            outputs=manual_components,
-        )
+    run_opt_btn.click(
+        fn=run_optimization,
+        inputs=[
+            strategy_input,
+            dataset_input,
+            start_input,
+            end_input,
+            capital_input,
+            opt_mode_input,
+            opt_objective_input,
+            opt_n_trials_input,
+            *manual_components,
+            *tuning_components,
+        ],
+        outputs=[opt_summary_md, terminal, opt_trials_df, opt_result_state],
+    )
+    apply_best_btn.click(
+        fn=apply_best_params,
+        inputs=[strategy_input, opt_result_state],
+        outputs=manual_components,
+    )
