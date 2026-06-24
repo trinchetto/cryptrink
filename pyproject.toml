@@ -29,11 +29,11 @@ dependencies = [
 
     # Cryptography for Revolut X Ed25519 signing
     "pynacl>=1.5,<2.0",
-    "cryptography>=46.0.7,<47.0",
+    "cryptography>=48.0.1,<49.0",
 
     # Data validation & settings
     "pydantic>=2.10,<3.0",
-    "pydantic-settings>=2.6,<3.0",
+    "pydantic-settings>=2.14.2,<3.0",
 
     # Data processing
     "pandas>=2.2,<3.0",
@@ -59,7 +59,7 @@ dependencies = [
 
     # Visualization for backtesting
     "matplotlib (>=3.9,<4.0)",
-    "aiohttp (>=3.13.3,<4.0.0)",
+    "aiohttp (>=3.14.1,<4.0.0)",
 
     # Bayesian optimisation (TPE) for backtest parameter tuning
     "optuna>=4.0,<5.0",
