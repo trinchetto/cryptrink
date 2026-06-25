@@ -218,6 +218,10 @@ cryptrink.db
 /data/
 logs/
 
+# Generated at deploy time by .github/workflows/sync-to-hf.yml (poetry export)
+# and pushed only to the Hugging Face Space — never committed to this repo.
+requirements.txt
+
 # Secrets and API keys
 .env.local
 *.pem

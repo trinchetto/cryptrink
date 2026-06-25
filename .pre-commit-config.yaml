@@ -44,19 +44,6 @@ repos:
     hooks:
       - id: poetry-check
 
-  # Keep requirements.txt (the Hugging Face Spaces deploy manifest) a generated
-  # artifact: regenerate it from poetry.lock whenever the lock or pyproject change.
-  # Needs the export plugin once: `poetry self add poetry-plugin-export`.
-  # CI also gates this via .github/scripts/check_requirements_sync.py.
-  - repo: local
-    hooks:
-      - id: poetry-export-requirements
-        name: Sync requirements.txt from poetry.lock
-        entry: poetry export --without-hashes --extras web -f requirements.txt -o requirements.txt
-        language: system
-        pass_filenames: false
-        files: ^(pyproject\.toml|poetry\.lock|requirements\.txt)$
-
 ci:
   autofix_commit_msg: 'style: auto-fix by pre-commit hooks'
   autoupdate_commit_msg: 'chore: update pre-commit hooks'

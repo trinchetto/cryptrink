@@ -1,15 +1,13 @@
 # Dependabot configuration.
 # https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 #
-# Python deps are managed by Poetry (pyproject.toml + poetry.lock). requirements.txt
-# is a GENERATED artifact — it exists only so Hugging Face Spaces can `pip install`
-# it, and is exported from poetry.lock via:
-#   poetry export --without-hashes --extras web -o requirements.txt
-# Keeping it in sync is enforced by the pre-commit hook (poetry-export-requirements)
-# and the CI "requirements.txt sync" job (.github/scripts/check_requirements_sync.py),
-# NOT by Dependabot. Updates are grouped into a single weekly PR so the lock is
-# re-resolved once per cycle (separate per-package PRs previously caused the lock and
-# requirements.txt to drift apart on merge).
+# Python deps are managed solely by Poetry (pyproject.toml + poetry.lock). There is
+# deliberately NO requirements.txt in the repo: it is generated at deploy time by
+# .github/workflows/sync-to-hf.yml (poetry export) and pushed only to the Hugging
+# Face Space. This keeps Dependabot focused on pyproject.toml/poetry.lock — when a
+# committed requirements.txt also existed, Dependabot bumped its pins independently
+# of the lock, producing unmergeable PRs. Updates are grouped into one weekly PR so
+# the lock is re-resolved once per cycle.
 
 version: 2
 updates:

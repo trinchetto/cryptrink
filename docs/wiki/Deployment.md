@@ -28,25 +28,33 @@ infrastructure, but they are not the primary deployment path.
    - Hardware: **CPU basic - free**
    - Visibility: Private (recommended).
 
-2. Get a write-scoped HF access token:
-   <https://huggingface.co/settings/tokens> → New token → role **Write**.
+2. Get a write-scoped HF access token
+   (<https://huggingface.co/settings/tokens> → New token → role **Write**) and
+   add it to the GitHub repo as the Actions secret **`HF_TOKEN`**
+   (Settings → Secrets and variables → Actions → New repository secret).
 
-3. Push the cryptrink branch as the Space's `main`:
+3. Deployment is **automatic**: every push to `main` triggers
+   [`.github/workflows/sync-to-hf.yml`](../../.github/workflows/sync-to-hf.yml),
+   which force-pushes `main` to the Space `trinchetto/cryptrink`. The Space repo
+   is a deploy target, not a source of truth — direct commits to it are
+   overwritten. (Point the workflow's `SPACE_REPO` at your own Space if forking.)
+
+   The workflow **generates `requirements.txt`** from `poetry.lock`
+   (`poetry export --without-hashes --extras web`) and includes it in the push.
+   `requirements.txt` is intentionally **not committed** to this repo — keeping it
+   out means Dependabot only manages `pyproject.toml`/`poetry.lock`. Do not add it
+   back; edit dependencies via Poetry and the next push regenerates it.
+
+   To deploy by hand (e.g. first-time setup before the secret exists):
    ```bash
-   git remote add space https://huggingface.co/spaces/<owner>/<space-name>
-   git push space <branch>:main
-   # If the Space already has the auto-init commit, force the first push:
-   #   git push space <branch>:main --force
+   poetry export --without-hashes --extras web -o requirements.txt
+   git add -f requirements.txt && git commit -m "deploy reqs"
+   git push --force https://huggingface.co/spaces/<owner>/<space-name> HEAD:main
    ```
 
-4. Watch **Logs** until the Space switches to **Running**. The
-   front-matter at the top of `README.md` (`sdk: gradio`,
-   `app_file: app.py`, `sdk_version: 6.x`) tells HF how to build it.
-   `requirements.txt` is consumed verbatim — regenerate it whenever
-   `pyproject.toml` changes via:
-   ```bash
-   poetry export --without-hashes --extras web -f requirements.txt -o requirements.txt
-   ```
+4. Watch **Logs** until the Space switches to **Running**. The front-matter at the
+   top of `README.md` (`sdk: gradio`, `app_file: app.py`, `sdk_version: 6.x`)
+   tells HF how to build it.
 
 5. Walk the three tabs in the browser. The DB is ephemeral container
    disk on this tier — backtests, suggestions, and the live tab fall

@@ -98,24 +98,6 @@ jobs:
           path: .github/badges/coverage.svg
 
 
-  requirements-sync:
-    name: requirements.txt sync
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Set up Python 3.13
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
-
-      # requirements.txt is a generated artifact (HF Spaces installs it via pip).
-      # Fail the build if it has drifted from poetry.lock, so CI and the deploy
-      # never run different dependency versions. Regenerate with:
-      #   poetry export --without-hashes --extras web -o requirements.txt
-      - name: Check requirements.txt is in sync with poetry.lock
-        run: python .github/scripts/check_requirements_sync.py
-
   coverage-pages:
     name: Publish Coverage Badge (Pages)
     runs-on: ubuntu-latest
