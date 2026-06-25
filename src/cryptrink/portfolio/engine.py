@@ -215,8 +215,11 @@ class PortfolioBacktestEngine:
                 # ``loc[:ts]`` slices the DatetimeIndex up to and
                 # including ``ts``. pandas-stubs is over-conservative
                 # about datetime slicing here — at runtime this is the
-                # documented behaviour for DatetimeIndex.
-                history = frame.loc[:ts]  # type: ignore[misc]
+                # documented behaviour for DatetimeIndex. Whether the stub
+                # flags this varies by pandas-stubs/Python version, so the
+                # ``unused-ignore`` code keeps it valid either way under
+                # ``warn_unused_ignores``.
+                history = frame.loc[:ts]  # type: ignore[misc, unused-ignore]
                 strategy_context = self._build_strategy_context(symbol, history)
                 signal = self._router.generate_signal(strategy_context)
                 self._signal_counts[symbol][signal.signal_type.value] += 1
