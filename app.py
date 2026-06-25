@@ -5,10 +5,12 @@ for ``app.py`` by default. It defers all wiring to
 :func:`cryptrink.web.app.build_demo`.
 
 HF Spaces only runs ``pip install -r requirements.txt`` before launching the
-app — it doesn't ``pip install .`` the project. We use a src-layout
-(``src/cryptrink/...``), so we prepend ``src/`` to ``sys.path`` here to make
-the package importable inside the Space. Locally, ``poetry install`` makes
-cryptrink importable via the venv's site-packages; the sys.path entry is
+app — it doesn't ``pip install .`` the project. ``requirements.txt`` is not
+committed to this repo; it is generated from ``poetry.lock`` at deploy time by
+``.github/workflows/sync-to-hf.yml`` and pushed to the Space. We use a
+src-layout (``src/cryptrink/...``), so we prepend ``src/`` to ``sys.path`` here
+to make the package importable inside the Space. Locally, ``poetry install``
+makes cryptrink importable via the venv's site-packages; the sys.path entry is
 then redundant but harmless.
 """
 

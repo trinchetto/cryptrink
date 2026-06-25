@@ -1,0 +1,82 @@
+# Deploys cryptrink to the HuggingFace Space `trinchetto/cryptrink` on every push to main.
+#
+# cryptrink runs as a Gradio-SDK Space, which builds by running
+# `pip install -r requirements.txt`. That file is deliberately NOT committed to this
+# repo (so Dependabot only manages pyproject.toml/poetry.lock); instead it is
+# generated from poetry.lock at deploy time below and pushed, together with `main`,
+# to the Space. GitHub is the source of truth and the Space is a deploy target, so
+# the push is a force-push — any commits made directly on the Space side are lost.
+#
+# Setup (one-time):
+#   1. Create an HF write token at https://huggingface.co/settings/tokens (role: Write).
+#   2. Add it as a GitHub Actions secret named HF_TOKEN
+#      (Settings → Secrets and variables → Actions → New repository secret).
+#
+# Failure modes:
+#   - HF_TOKEN missing/revoked → push step 401/403. Rotate the token, update HF_TOKEN.
+#   - Space deleted / renamed  → push step 404. Update SPACE_REPO below.
+#   - Workflow itself broken   → check the Actions tab; the Space keeps serving the
+#                                previous version until the next successful run.
+
+name: Sync to HuggingFace Space
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # manual trigger from the Actions tab
+
+concurrency:
+  group: hf-sync
+  cancel-in-progress: false  # don't interrupt an in-flight deploy
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      SPACE_REPO: trinchetto/cryptrink
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: latest
+
+      - name: Add poetry-plugin-export
+        run: poetry self add poetry-plugin-export
+
+      # The Space's Gradio build installs this. Generated from poetry.lock so the
+      # deployed dependency set exactly matches what CI tested.
+      - name: Generate requirements.txt from poetry.lock
+        run: poetry export --without-hashes --extras web -o requirements.txt
+
+      - name: Commit generated requirements.txt for the Space build
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f requirements.txt
+          git commit -m "Deploy: generated requirements.txt (poetry export --extras web)"
+
+      - name: Push to HuggingFace Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "::error::HF_TOKEN secret is not set (Settings → Secrets and variables → Actions)"
+            exit 1
+          fi
+          # Token is auto-masked by Actions; do not echo $HF_TOKEN.
+          git push --force \
+            "https://x-access-token:${HF_TOKEN}@huggingface.co/spaces/${SPACE_REPO}" \
+            HEAD:main
