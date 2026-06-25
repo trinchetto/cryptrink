@@ -61,12 +61,22 @@ jobs:
       - name: Generate requirements.txt from poetry.lock
         run: poetry export --without-hashes --extras web -o requirements.txt
 
-      - name: Commit generated requirements.txt for the Space build
+      # HF's Gradio SDK installs `gradio==<sdk_version>` (from README front-matter)
+      # AND `requirements.txt`. If those pin different gradio versions the build
+      # can't resolve (gradio==X vs gradio==Y). Keep sdk_version locked to the same
+      # gradio as poetry.lock so the two never disagree.
+      - name: Sync README sdk_version to the locked gradio
+        run: |
+          gradio_ver=$(poetry run python -c "import tomllib; print(next(p['version'] for p in tomllib.load(open('poetry.lock','rb'))['package'] if p['name']=='gradio'))")
+          sed -i "s/^sdk_version:.*/sdk_version: ${gradio_ver}/" README.md
+          grep '^sdk_version:' README.md
+
+      - name: Commit generated requirements.txt + synced sdk_version for the Space build
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -f requirements.txt
-          git commit -m "Deploy: generated requirements.txt (poetry export --extras web)"
+          git add -f requirements.txt README.md
+          git commit -m "Deploy: generated requirements.txt + sdk_version from poetry.lock"
 
       - name: Push to HuggingFace Space
         env:
