@@ -32,8 +32,12 @@ dependencies = [
     "cryptography>=49.0.0,<50.0",
 
     # Data validation & settings
-    "pydantic>=2.13.4,<3.0",
-    "pydantic-settings>=2.14.2,<3.0",
+    # Cap pydantic <=2.12.5: HF's Gradio SDK force-installs gradio[oauth,mcp], and
+    # gradio's `mcp` extra pins pydantic<=2.12.5,>=2.11.10. We don't use gradio's MCP
+    # server, but HF injects the extra anyway, so requirements.txt must stay in that
+    # window or the Space build fails to resolve. (Lift when gradio/mcp widens it.)
+    "pydantic>=2.11.10,<=2.12.5",
+    "pydantic-settings>=2.6,<3.0",
 
     # Data processing
     "pandas>=2.2,<3.0",
