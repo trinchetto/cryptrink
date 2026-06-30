@@ -91,7 +91,10 @@ gradio-app { background: var(--bg); }
 footer { display: none !important; }
 
 #ck-root {
-  min-width: 1180px; min-height: 100vh;
+  /* Fixed to the viewport (not min-height) so the body row scrolls internally and
+     the terminal stays pinned at the bottom. With min-height, tall screen content
+     grew the page and pushed the terminal far below the fold. */
+  min-width: 1180px; height: 100vh; overflow: hidden;
   display: grid; grid-template-rows: auto auto 1fr auto;
   background: var(--bg); color: var(--text);
   font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 13px;
@@ -148,7 +151,9 @@ footer { display: none !important; }
    three tracks (sidebar | main | rail) size to the grid, not to content. */
 .ck-body { display: grid !important; grid-template-columns: 212px 1fr 296px !important;
   min-height: 0; gap: 0 !important; }
-.ck-body > * { min-width: 0 !important; }
+/* min-height:0 lets each column shrink inside the fixed-height body row; overflow-y
+   makes them scroll internally instead of growing the page (which hid the terminal). */
+.ck-body > * { min-width: 0 !important; min-height: 0 !important; overflow-y: auto; }
 .ck-sidebar { border-right: 1px solid var(--border); background: var(--surface);
   padding: 14px 10px; display: flex; flex-direction: column; gap: 4px; }
 .ck-nav-group-label { font-size: 9.5px; font-weight: 600; letter-spacing: 1.2px;
