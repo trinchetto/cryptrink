@@ -30,13 +30,8 @@ def _candles() -> list[dict[str, object]]:
 
 
 class TestThemeColors:
-    def test_for_theme_carbon_accent(self):
-        colors = charts.ThemeColors.for_theme("carbon")
-        assert colors.accent == "#3fd9a8"
-
-    def test_unknown_theme_falls_back(self):
-        colors = charts.ThemeColors.for_theme("nope")
-        assert colors.accent == charts.ThemeColors.for_theme("carbon").accent
+    def test_carbon_accent(self):
+        assert charts.CARBON_COLORS.accent == "#3fd9a8"
 
 
 class TestEquityCurveFigure:

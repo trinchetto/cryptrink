@@ -321,40 +321,6 @@ def _status_html(
 # ----------------------------------------------------------------------
 
 
-async def test_discord(_: object = None) -> str:
-    """Send a synthetic notification to the configured Discord webhook."""
-    runtime = get_runtime()
-    notifications = runtime.settings.notifications
-    if not notifications.discord_enabled:
-        return (
-            "**Discord disabled.** Set `NOTIFY_DISCORD_ENABLED=true` and "
-            "`NOTIFY_DISCORD_WEBHOOK_URL=<webhook>` in the Space secrets, then "
-            "restart the Space."
-        )
-    webhook = notifications.discord_webhook_url.get_secret_value()
-    if not webhook:
-        return (
-            "**Webhook URL is empty.** `NOTIFY_DISCORD_ENABLED` is true but "
-            "`NOTIFY_DISCORD_WEBHOOK_URL` is unset — set it in the Space secrets."
-        )
-
-    from cryptrink.notifications.discord import DiscordNotifier
-
-    notifier = DiscordNotifier(webhook_url=webhook, enabled=True)
-    result = await notifier.send_test()
-    if result.ok:
-        return (
-            f"✅ **Webhook OK** ({result.status}). Check your Discord channel — "
-            "you should see a 'Cryptrink test notification' embed."
-        )
-    return (
-        f"❌ **Webhook failed** (HTTP {result.status}).\n\n"
-        f"```\n{result.detail}\n```\n\n"
-        "Common causes: 401/403 (revoked webhook or Slack-shaped URL), 404 "
-        "(deleted webhook), or a network error reaching `discord.com`."
-    )
-
-
 async def preflight_order(dataset_value: str | None, initial_balance: float) -> str:
     """Look up Revolut X pair limits and check the planned order would clear them."""
     if not dataset_value:

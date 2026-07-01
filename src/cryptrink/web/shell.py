@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING
 import gradio as gr
 
 from cryptrink.web import state as web_state
-from cryptrink.web import theme
 from cryptrink.web.live_loop import get_active_loop
 from cryptrink.web.live_setup import has_revolutx_credentials
 
@@ -99,7 +98,7 @@ SCREEN_META: dict[str, tuple[str, str]] = {
     ),
     "settings": (
         "Settings",
-        "Connection, default risk limits, and appearance. The knobs that rarely change "
+        "Connection and default risk limits. The knobs that rarely change "
         "live here, out of the workflow.",
     ),
 }
@@ -332,22 +331,16 @@ def build_workspace(demo: gr.Blocks, screen_builders: dict[str, Callable[[], Non
 
     ``screen_builders`` maps a screen key (see :data:`SCREEN_ORDER`) to the function
     that renders that screen's panel. The shell mounts each inside a visibility-toggled
-    group, wires the sidebar navigation, theme switch, and docked global terminal.
+    group, wires the sidebar navigation and docked global terminal.
     """
     mode = web_state.get_mode()
     screen_state = gr.State(DEFAULT_SCREEN)
     term_filter = gr.State("all")
 
-    with gr.Column(elem_id="ck-root", elem_classes=["ck-theme-carbon"]):
+    with gr.Column(elem_id="ck-root"):
         # ---- header ----
         with gr.Row(elem_classes=["ck-header"]):
             header_left = gr.HTML(_header_now(), elem_id="ck-header-left")
-            theme_btns = {
-                name: gr.Button(glyph, elem_classes=["ck-theme-btn"], scale=0)
-                for name, glyph in (("carbon", "◐"), ("slate", "◑"), ("daylight", "☀"))
-            }
-        for name, btn in theme_btns.items():
-            btn.click(fn=None, js=theme.theme_switch_js(name))
 
         # ---- mode banner ----
         with gr.Row(elem_id="ck-banner-row"):

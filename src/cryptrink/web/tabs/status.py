@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import gradio as gr
 import pandas as pd
 from sqlalchemy import select
 
@@ -118,22 +117,3 @@ def _positions_dataframe(positions: list[Position]) -> pd.DataFrame:
         for p in positions
     ]
     return pd.DataFrame(rows, columns=columns)
-
-
-def render() -> None:
-    """Render the Status tab UI inside an enclosing :class:`gr.Tabs`."""
-    with gr.Tab("Status"):
-        gr.Markdown(
-            "Read-only view of engine state, recent orders, and recent positions persisted "
-            "in the configured database."
-        )
-        refresh_btn = gr.Button("Refresh", variant="primary")
-        engines_output = gr.Dataframe(label="Engines")
-        orders_output = gr.Dataframe(label="Recent orders")
-        positions_output = gr.Dataframe(label="Recent positions")
-
-        refresh_btn.click(
-            fn=refresh,
-            inputs=[],
-            outputs=[engines_output, orders_output, positions_output],
-        )

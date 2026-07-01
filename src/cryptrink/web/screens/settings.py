@@ -1,8 +1,8 @@
-"""Settings screen — connection, default risk limits, and appearance.
+"""Settings screen — connection and default risk limits.
 
 Read-only display of the loaded configuration (the rarely-changed knobs pulled out
-of the workflow) plus the three theme swatches. Secrets are masked; nothing here
-mutates config — values come from environment / config files.
+of the workflow). Secrets are masked; nothing here mutates config — values come
+from environment / config files.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 import gradio as gr
 
-from cryptrink.web import components, theme
+from cryptrink.web import components
 from cryptrink.web.state import get_runtime
 
 if TYPE_CHECKING:
@@ -72,25 +72,9 @@ def _risk_html(settings: Settings) -> str:
     return f'<div class="ck-card"><div class="ck-section-label">Risk defaults</div>{rows}</div>'
 
 
-_THEME_SWATCHES = (
-    ("carbon", "Carbon", "Dark · teal accent"),
-    ("slate", "Slate", "Dark · indigo accent"),
-    ("daylight", "Daylight", "Light · green accent"),
-)
-
-
 def render() -> None:
     """Render the Settings screen panel inside the workspace shell."""
     settings = get_runtime().settings
-    with gr.Row(elem_classes=["ck-screen-cols"]):
-        with gr.Column(elem_classes=["ck-col-main"]):
-            gr.HTML(_connection_html(settings))
-            gr.HTML(_risk_html(settings))
-        with (
-            gr.Column(scale=0, elem_classes=["ck-col-320"]),
-            gr.Group(elem_classes=["ck-card"]),
-        ):
-            gr.HTML('<div class="ck-section-label">Appearance</div>')
-            for name, label, sub in _THEME_SWATCHES:
-                btn = gr.Button(f"{label} — {sub}", elem_classes=["ck-btn-secondary"])
-                btn.click(fn=None, js=theme.theme_switch_js(name))
+    with gr.Row(elem_classes=["ck-screen-cols"]), gr.Column(elem_classes=["ck-col-main"]):
+        gr.HTML(_connection_html(settings))
+        gr.HTML(_risk_html(settings))

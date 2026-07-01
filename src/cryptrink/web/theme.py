@@ -1,75 +1,12 @@
-"""Design tokens, global CSS, fonts, and theme-switch JS for the workspace UI.
+"""Design tokens, global CSS, and fonts for the workspace UI.
 
 This module is pure data + string builders (no gradio import) so it can be unit
-tested. The three theme token sets are taken verbatim from the design handoff
-prototype (``design_handoff_ui_redesign/Cryptrink.dc.html`` ``THEMES`` object).
-Carbon is the default; Slate and Daylight are swapped client-side by toggling the
-``ck-theme-*`` class on ``#ck-root`` (see :func:`theme_switch_js`).
+tested. The app ships a single "Carbon" theme: its CSS custom properties are
+declared once on ``#ck-root`` and every component style references them via
+``var(--token)``.
 """
 
 from __future__ import annotations
-
-DEFAULT_THEME = "carbon"
-
-# Each theme defines the same set of CSS custom properties. Every component style
-# in the app references these via ``var(--token)`` so a single class swap reskins
-# the whole tree.
-THEMES: dict[str, dict[str, str]] = {
-    "carbon": {
-        "--bg": "#14171c",
-        "--surface": "#1b1f25",
-        "--surface2": "#232830",
-        "--border": "#2e343d",
-        "--text": "#e7e9ec",
-        "--dim": "#9aa1ab",
-        "--faint": "#6b7280",
-        "--accent": "#3fd9a8",
-        "--accent-dim": "#1f6b56",
-        "--accent-soft": "#16302a",
-        "--pos": "#3fd98a",
-        "--neg": "#f0616d",
-        "--paper": "#f0b54a",
-        "--live": "#ef4658",
-        "--live-glow": "rgba(239,70,88,0.5)",
-        "--shadow": "rgba(0,0,0,0.4)",
-    },
-    "slate": {
-        "--bg": "#1a1d27",
-        "--surface": "#222634",
-        "--surface2": "#2a2f40",
-        "--border": "#363c50",
-        "--text": "#e6e8f0",
-        "--dim": "#9ca3b8",
-        "--faint": "#6b7186",
-        "--accent": "#8b8cf0",
-        "--accent-dim": "#3a3a6b",
-        "--accent-soft": "#23244a",
-        "--pos": "#5ad1a0",
-        "--neg": "#f07089",
-        "--paper": "#e0b24a",
-        "--live": "#f0526f",
-        "--live-glow": "rgba(240,82,111,0.5)",
-        "--shadow": "rgba(0,0,0,0.45)",
-    },
-    "daylight": {
-        "--bg": "#f4f3ef",
-        "--surface": "#ffffff",
-        "--surface2": "#faf9f6",
-        "--border": "#e4e2da",
-        "--text": "#1c1f24",
-        "--dim": "#5b626c",
-        "--faint": "#9aa0a8",
-        "--accent": "#0f9d76",
-        "--accent-dim": "#bfe9da",
-        "--accent-soft": "#e7f6f0",
-        "--pos": "#0f9d76",
-        "--neg": "#d63d4e",
-        "--paper": "#b9810f",
-        "--live": "#d63d4e",
-        "--live-glow": "rgba(214,61,78,0.35)",
-        "--shadow": "rgba(20,23,28,0.08)",
-    },
-}
 
 _FONTS_HEAD = (
     '<link rel="preconnect" href="https://fonts.googleapis.com">'
@@ -91,6 +28,23 @@ gradio-app { background: var(--bg); }
 footer { display: none !important; }
 
 #ck-root {
+  /* Carbon theme tokens. Every component style references these via var(--token). */
+  --bg: #14171c;
+  --surface: #1b1f25;
+  --surface2: #232830;
+  --border: #2e343d;
+  --text: #e7e9ec;
+  --dim: #9aa1ab;
+  --faint: #6b7280;
+  --accent: #3fd9a8;
+  --accent-dim: #1f6b56;
+  --accent-soft: #16302a;
+  --pos: #3fd98a;
+  --neg: #f0616d;
+  --paper: #f0b54a;
+  --live: #ef4658;
+  --live-glow: rgba(239,70,88,0.5);
+  --shadow: rgba(0,0,0,0.4);
   /* Fixed to the viewport (not min-height) so the body row scrolls internally and
      the terminal stays pinned at the bottom. With min-height, tall screen content
      grew the page and pushed the terminal far below the fold. */
@@ -126,8 +80,6 @@ footer { display: none !important; }
 .ck-balance-v { font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 15px; }
 .ck-synced { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px;
   border: 1px solid var(--border); border-radius: 7px; font-size: 11px; color: var(--dim); }
-.ck-theme-btn button, button.ck-theme-btn { min-width: 30px !important; padding: 2px 6px !important;
-  border-radius: 6px !important; }
 
 /* ---- mode banner ---- */
 .ck-banner { display: flex; align-items: center; gap: 11px; min-height: 34px;
@@ -299,17 +251,10 @@ footer { display: none !important; }
 def build_css() -> str:
     """Return the global CSS string for ``gr.Blocks(css=...)``.
 
-    Combines the base layout/component CSS with one ``.ck-theme-<name>`` block per
-    theme that declares that theme's CSS custom properties.
+    The single Carbon theme's CSS custom properties are declared on ``#ck-root``
+    directly in the base CSS, so this just returns the layout/component CSS.
     """
-    theme_blocks = "\n".join(
-        ".ck-theme-{name} {{ {tokens} }}".format(
-            name=name,
-            tokens=" ".join(f"{key}: {value};" for key, value in tokens.items()),
-        )
-        for name, tokens in THEMES.items()
-    )
-    return _BASE_CSS + "\n" + theme_blocks
+    return _BASE_CSS
 
 
 def fonts_head() -> str:
@@ -317,24 +262,10 @@ def fonts_head() -> str:
     return _FONTS_HEAD
 
 
-def theme_switch_js(name: str) -> str:
-    """Return a JS function (for ``Button(...).click(js=...)``) that swaps the theme.
-
-    Removes any existing ``ck-theme-*`` class from ``#ck-root``, applies the
-    requested one, and persists the choice in ``localStorage`` so a reload keeps it.
-    """
-    return (
-        "() => { const r = document.getElementById('ck-root'); if (r) { "
-        "['carbon','slate','daylight'].forEach(t => r.classList.remove('ck-theme-' + t)); "
-        f"r.classList.add('ck-theme-{name}'); "
-        f"try {{ localStorage.setItem('ck-theme', '{name}'); }} catch (e) {{}} }} }}"
-    )
-
-
 def boot_js() -> str:
     """Return a JS function for ``gr.Blocks(js=...)`` run on app load.
 
-    Restores the saved theme from ``localStorage`` and installs a small observer
+    Forces Gradio's own components into dark mode and installs a small observer
     that keeps the docked terminal scrolled to the newest line.
     """
     return (
@@ -344,10 +275,6 @@ def boot_js() -> str:
         " document.body.classList.add('dark');"
         " const app = document.querySelector('gradio-app');"
         " if (app) app.classList.add('dark');"
-        " const r = document.getElementById('ck-root');"
-        " try { const t = localStorage.getItem('ck-theme');"
-        " if (r && t) { ['carbon','slate','daylight'].forEach(x => r.classList.remove('ck-theme-' + x));"
-        " r.classList.add('ck-theme-' + t); } } catch (e) {}"
         " const stick = () => { const el = document.getElementById('ck-term');"
         " if (el) el.scrollTop = el.scrollHeight; };"
         " setInterval(stick, 600);"

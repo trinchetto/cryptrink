@@ -25,7 +25,6 @@ from cryptrink.execution.models import Position
 from cryptrink.portfolio.engine import PortfolioBacktestEngine
 from cryptrink.portfolio.models import dump_yaml, example_portfolio, load_yaml
 from cryptrink.portfolio.storage import (
-    DEFAULT_PORTFOLIO_DIR,
     delete_portfolio,
     list_portfolio_names,
     load_portfolio,
@@ -56,15 +55,6 @@ def _format_elapsed(start_perf: float) -> str:
 
 def _portfolio_choices() -> list[str]:
     return list_portfolio_names()
-
-
-def refresh_portfolios(current: str | None) -> object:
-    names = _portfolio_choices()
-    log_event("portfolio", "info", f"portfolios: {len(names)} on disk ({DEFAULT_PORTFOLIO_DIR})")
-    if not names:
-        return gr.update(choices=[], value=None)
-    new_value = current if current in names else names[0]
-    return gr.update(choices=names, value=new_value)
 
 
 def load_portfolio_yaml(name: str | None) -> str:
@@ -354,7 +344,6 @@ def render() -> None:
                 with gr.Row():
                     new_btn = gr.Button("+ New", elem_classes=["ck-btn-secondary"])
                     delete_btn = gr.Button("Delete", elem_classes=["ck-btn-secondary"])
-                refresh_btn = gr.Button("Refresh", elem_classes=["ck-btn-secondary"], visible=False)
 
             with gr.Group(elem_classes=["ck-card"]):
                 gr.HTML('<div class="ck-section-label">Allocations (YAML)</div>')
@@ -378,9 +367,6 @@ def render() -> None:
                 trades_output = gr.Dataframe(value=_empty_trades_df())
 
     # ---- wiring ----
-    refresh_btn.click(
-        fn=refresh_portfolios, inputs=[portfolio_dropdown], outputs=[portfolio_dropdown]
-    )
     portfolio_dropdown.change(fn=load_portfolio_yaml, inputs=[portfolio_dropdown], outputs=[editor])
     new_btn.click(fn=new_portfolio_yaml, inputs=[], outputs=[editor])
     save_btn.click(fn=save_portfolio_yaml, inputs=[editor], outputs=[portfolio_dropdown])

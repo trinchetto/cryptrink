@@ -2,9 +2,7 @@
 
 These return :class:`plotly.graph_objects.Figure` objects fed to ``gr.Plot``. Plotly's
 ``hovermode="x unified"`` plus axis spike lines reproduce the prototype's crosshair +
-tooltip without custom canvas JS. Colours are pulled from a theme's CSS-variable token
-set so a future theme switch can repaint the charts by re-rendering with a new
-``theme_name``.
+tooltip without custom canvas JS. Colours are the fixed Carbon theme tokens.
 """
 
 from __future__ import annotations
@@ -14,8 +12,6 @@ from typing import TYPE_CHECKING
 
 import plotly.graph_objects as go  # type: ignore[import-untyped]  # plotly ships no stubs
 
-from cryptrink.web import theme
-
 if TYPE_CHECKING:
     from datetime import datetime
     from decimal import Decimal
@@ -23,7 +19,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class ThemeColors:
-    """The handful of theme tokens the charts need, resolved to hex strings."""
+    """The handful of Carbon-theme tokens the charts need, resolved to hex strings."""
 
     accent: str
     pos: str
@@ -34,20 +30,18 @@ class ThemeColors:
     text: str
     bg: str
 
-    @classmethod
-    def for_theme(cls, name: str = theme.DEFAULT_THEME) -> ThemeColors:
-        """Build colours from a named theme, falling back to the default."""
-        tokens = theme.THEMES.get(name, theme.THEMES[theme.DEFAULT_THEME])
-        return cls(
-            accent=tokens["--accent"],
-            pos=tokens["--pos"],
-            neg=tokens["--neg"],
-            border=tokens["--border"],
-            faint=tokens["--faint"],
-            surface=tokens["--surface"],
-            text=tokens["--text"],
-            bg=tokens["--bg"],
-        )
+
+# The fixed Carbon palette (mirrors the CSS custom properties on ``#ck-root``).
+CARBON_COLORS = ThemeColors(
+    accent="#3fd9a8",
+    pos="#3fd98a",
+    neg="#f0616d",
+    border="#2e343d",
+    faint="#6b7280",
+    surface="#1b1f25",
+    text="#e7e9ec",
+    bg="#14171c",
+)
 
 
 def _base_layout(colors: ThemeColors) -> dict[str, object]:
@@ -82,15 +76,13 @@ def _base_layout(colors: ThemeColors) -> dict[str, object]:
 
 def equity_curve_figure(
     points: list[tuple[datetime, Decimal]],
-    theme_name: str = theme.DEFAULT_THEME,
 ) -> go.Figure:
     """Return an equity-curve line + area figure with a crosshair tooltip.
 
     Args:
         points: ``(timestamp, equity)`` samples in chronological order.
-        theme_name: Theme whose colours the figure uses.
     """
-    colors = ThemeColors.for_theme(theme_name)
+    colors = CARBON_COLORS
     fig = go.Figure(layout=_base_layout(colors))
     if not points:
         return fig
@@ -115,15 +107,13 @@ def equity_curve_figure(
 
 def candlestick_figure(
     candles: list[dict[str, object]],
-    theme_name: str = theme.DEFAULT_THEME,
 ) -> go.Figure:
     """Return an OHLC candlestick figure (green up / red down) with a crosshair.
 
     Args:
         candles: dicts with ``time``, ``open``, ``high``, ``low``, ``close`` keys.
-        theme_name: Theme whose colours the figure uses.
     """
-    colors = ThemeColors.for_theme(theme_name)
+    colors = CARBON_COLORS
     fig = go.Figure(layout=_base_layout(colors))
     if not candles:
         fig.update_layout(xaxis_rangeslider_visible=False)
