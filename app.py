@@ -29,10 +29,9 @@ demo = build_demo()
 
 
 if __name__ == "__main__":
-    # ssr_mode=False: gradio 6.x enables server-side rendering when Node is present
-    # (the HF Spaces image installs it), which starts a Node proxy in front of the
-    # Python server. Inside the HF container that proxy fails gradio's own
-    # localhost-reachability check and crashes launch with "When localhost is not
-    # accessible, a shareable link must be created." SSR is only a first-paint
-    # optimisation, so disable it and serve the Python app directly.
-    demo.launch(ssr_mode=False)
+    # Let gradio use its default SSR mode (on when Node is present, which the HF
+    # Spaces image provides). On gradio 6.15 ssr_mode had to be forced off to dodge
+    # a launch crash, but that left the /queue/data SSE undelivered on HF (silent
+    # hang). On gradio 6.19 we use the HF-native SSR/Node path, which is what HF's
+    # proxy expects for streaming. Locally (no Node) gradio falls back to CSR.
+    demo.launch()

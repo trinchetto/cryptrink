@@ -32,11 +32,7 @@ dependencies = [
     "cryptography>=49.0.0,<50.0",
 
     # Data validation & settings
-    # Cap pydantic <=2.12.5: HF's Gradio SDK force-installs gradio[oauth,mcp], and
-    # gradio's `mcp` extra pins pydantic<=2.12.5,>=2.11.10. We don't use gradio's MCP
-    # server, but HF injects the extra anyway, so requirements.txt must stay in that
-    # window or the Space build fails to resolve. (Lift when gradio/mcp widens it.)
-    "pydantic>=2.11.10,<=2.12.5",
+    "pydantic>=2.10,<3.0",
     "pydantic-settings>=2.6,<3.0",
 
     # Data processing
@@ -74,26 +70,18 @@ discord = [
     "discord.py>=2.7.1,<3.0",
 ]
 web = [
-    "gradio>=6.14,<7.0",
+    "gradio>=6.19,<7.0",
     # gradio's CLI subpackage imports `requests` eagerly during `import gradio`;
     # not declaring it here breaks app.py on a clean install.
     "requests>=2.34.2,<3.0",
     # Interactive equity-curve and candlestick charts in the web UI (gr.Plot).
     "plotly>=5.24,<7.0",
-    # Pin starlette <1.0. gradio's SSE queue (routes.py sse_stream) raises a 404
-    # HTTPException mid-stream during a normal session race; starlette 1.x turns
-    # "raise after response started" into a fatal RuntimeError that kills the
-    # /queue/data stream, causing an endless reconnect storm that freezes the UI
-    # (events never return). starlette 0.x handles it gracefully. Remove only once
-    # gradio no longer raises mid-stream (or supports starlette 1.x cleanly).
-    "starlette>=0.46,<1.0",
 ]
 all = [
     "discord.py>=2.7.1,<3.0",
-    "gradio>=6.14,<7.0",
+    "gradio>=6.19,<7.0",
     "requests>=2.34.2,<3.0",
     "plotly>=5.24,<7.0",
-    "starlette>=0.46,<1.0",  # see note in [web]; gradio SSE breaks on starlette 1.x
 ]
 
 [project.scripts]
