@@ -48,10 +48,12 @@ from cryptrink.strategies import registry as strategy_registry
 from cryptrink.strategies.base import BaseStrategy, Signal
 from cryptrink.web.state import (
     Dataset,
+    dataset_choices,
+    dataset_choices_sync,
     get_runtime,
     list_datasets,
-    list_datasets_sync,
     log_event,
+    select_dataset_value,
 )
 from cryptrink.web.tabs.backtest_tuning import (
     ManualPanel,
@@ -196,12 +198,6 @@ _NO_DATASET_NOTICE = (
 )
 
 
-async def _dataset_choices() -> list[tuple[str, str]]:
-    """Return Gradio-friendly ``(label, value)`` pairs for the dropdown."""
-    datasets = await list_datasets()
-    return [(ds.label, ds.value) for ds in datasets]
-
-
 async def refresh_datasets(current: str | None) -> tuple[object, str]:
     """Re-query the OHLCV table and update the Dataset dropdown.
 
@@ -213,7 +209,7 @@ async def refresh_datasets(current: str | None) -> tuple[object, str]:
     started = time.perf_counter()
     _emit("datasets: refreshing from OHLCV table…")
     try:
-        choices = await _dataset_choices()
+        choices = await dataset_choices()
     except Exception as exc:
         return gr.update(), _emit_failure("datasets: refresh failed", exc)
 
@@ -224,8 +220,7 @@ async def refresh_datasets(current: str | None) -> tuple[object, str]:
         )
         return gr.update(choices=[], value=None), log
 
-    values = {value for _, value in choices}
-    new_value = current if current in values else choices[0][1]
+    new_value = select_dataset_value(current, choices)
     log = _emit(
         f"datasets: refreshed — {len(choices)} group(s) available ({_format_elapsed(started)})"
     )
@@ -292,46 +287,40 @@ async def run_backtest(
     price_fig: matplotlib.figure.Figure | None = None
     trades_df = _empty_trades_df()
 
-    yield (
-        summary_md,
-        _emit(f"backtest: starting (strategy={strategy_name!r}, dataset={dataset_value!r})"),
-        equity_fig,
-        price_fig,
-        trades_df,
+    def _frame(
+        log: str,
+    ) -> tuple[
+        str, str, matplotlib.figure.Figure | None, matplotlib.figure.Figure | None, pd.DataFrame
+    ]:
+        """A full render of all five outputs: current summary/figs/trades + ``log``.
+
+        Reads the enclosing locals so each ``yield`` only names the log line that
+        changed instead of repeating the 5-tuple every step. Because closures read
+        the variables at call time, reassigning ``summary_md`` / ``*_fig`` /
+        ``trades_df`` later is reflected in subsequent frames.
+        """
+        return (summary_md, log, equity_fig, price_fig, trades_df)
+
+    yield _frame(
+        _emit(f"backtest: starting (strategy={strategy_name!r}, dataset={dataset_value!r})")
     )
 
     if not strategy_name:
-        yield (
-            summary_md,
-            _emit_failure("backtest: no strategy selected"),
-            equity_fig,
-            price_fig,
-            trades_df,
-        )
+        yield _frame(_emit_failure("backtest: no strategy selected"))
         return
     if not dataset_value:
-        yield (
-            summary_md,
+        yield _frame(
             _emit_failure(
                 "backtest: no dataset selected. Open the Data tab, run Backfill, "
                 "then click Refresh datasets here."
-            ),
-            equity_fig,
-            price_fig,
-            trades_df,
+            )
         )
         return
 
     try:
         symbol, timeframe = Dataset.parse(dataset_value)
     except ValueError as exc:
-        yield (
-            summary_md,
-            _emit_failure("backtest: malformed dataset value", exc),
-            equity_fig,
-            price_fig,
-            trades_df,
-        )
+        yield _frame(_emit_failure("backtest: malformed dataset value", exc))
         return
 
     try:
@@ -342,57 +331,29 @@ async def run_backtest(
             else datetime.now(UTC)
         )
     except ValueError as exc:
-        yield (
-            summary_md,
-            _emit_failure("backtest: invalid date", exc),
-            equity_fig,
-            price_fig,
-            trades_df,
-        )
+        yield _frame(_emit_failure("backtest: invalid date", exc))
         return
     if end_dt <= start_dt:
-        yield (
-            summary_md,
-            _emit_failure("backtest: end date must be after start date"),
-            equity_fig,
-            price_fig,
-            trades_df,
-        )
+        yield _frame(_emit_failure("backtest: end date must be after start date"))
         return
 
     try:
         manual_params = decode_manual_params(strategy_name, manual_param_values, _manual_panels)
     except (KeyError, ValueError) as exc:
-        yield (
-            summary_md,
-            _emit_failure(f"backtest: invalid parameter input for {strategy_name!r}", exc),
-            equity_fig,
-            price_fig,
-            trades_df,
-        )
+        yield _frame(_emit_failure(f"backtest: invalid parameter input for {strategy_name!r}", exc))
         return
 
     try:
         wrapped_strategy = resolve_strategy(strategy_name, **manual_params)
     except KeyError as exc:
-        yield (
-            summary_md,
-            _emit_failure(f"backtest: unknown strategy {strategy_name!r}", exc),
-            equity_fig,
-            price_fig,
-            trades_df,
-        )
+        yield _frame(_emit_failure(f"backtest: unknown strategy {strategy_name!r}", exc))
         return
     except (ValueError, TypeError) as exc:
-        yield (
-            summary_md,
+        yield _frame(
             _emit_failure(
                 f"backtest: strategy {strategy_name!r} rejected parameters {manual_params}",
                 exc,
-            ),
-            equity_fig,
-            price_fig,
-            trades_df,
+            )
         )
         return
 
@@ -400,17 +361,13 @@ async def run_backtest(
         _emit("backtest: parameters — " + ", ".join(f"{k}={v}" for k, v in manual_params.items()))
 
     if wrapped_strategy.timeframe != timeframe:
-        yield (
-            summary_md,
+        yield _frame(
             _emit(
                 f"backtest: WARNING — strategy {wrapped_strategy.name} prefers "
                 f"timeframe={wrapped_strategy.timeframe!r} but the selected "
                 f"dataset is {timeframe!r}. Running anyway against {timeframe!r} "
                 f"because the operator selected it explicitly."
-            ),
-            equity_fig,
-            price_fig,
-            trades_df,
+            )
         )
 
     runtime = get_runtime()
@@ -419,16 +376,12 @@ async def run_backtest(
     async with db_engine.begin() as conn:
         await conn.run_sync(OHLCVModel.metadata.create_all)
         await conn.run_sync(Position.metadata.create_all)
-    yield (
-        summary_md,
+    yield _frame(
         _emit(
             f"backtest: dataset={symbol} @ {timeframe}; "
             f"window={start_dt.date()} → {end_dt.date()}; "
             f"capital=€{initial_capital:,.2f}"
-        ),
-        equity_fig,
-        price_fig,
-        trades_df,
+        )
     )
 
     repository = OHLCVRepository(session_factory)
@@ -442,24 +395,14 @@ async def run_backtest(
         session_factory=session_factory,
         risk_settings=runtime.settings.risk,
     )
-    yield (
-        summary_md,
+    yield _frame(
         _emit(
             f"backtest: engine built (strategy.required_history="
             f"{wrapped_strategy.required_history}, lookback_periods=200)"
-        ),
-        equity_fig,
-        price_fig,
-        trades_df,
+        )
     )
 
-    yield (
-        summary_md,
-        _emit("backtest: running event-driven replay…"),
-        equity_fig,
-        price_fig,
-        trades_df,
-    )
+    yield _frame(_emit("backtest: running event-driven replay…"))
 
     run_started = time.perf_counter()
     try:
@@ -470,25 +413,17 @@ async def run_backtest(
             timeframe=timeframe,
         )
     except ValueError as exc:
-        yield (
-            summary_md,
+        yield _frame(
             _emit_failure(
                 f"backtest: no historical data for {symbol} {timeframe} in window "
                 f"({_format_elapsed(run_started)}). Use the Data tab to backfill first.",
                 exc,
-            ),
-            equity_fig,
-            price_fig,
-            trades_df,
+            )
         )
         return
     except Exception as exc:
-        yield (
-            summary_md,
-            _emit_failure(f"backtest: engine raised after {_format_elapsed(run_started)}", exc),
-            equity_fig,
-            price_fig,
-            trades_df,
+        yield _frame(
+            _emit_failure(f"backtest: engine raised after {_format_elapsed(run_started)}", exc)
         )
         return
 
@@ -501,7 +436,7 @@ async def run_backtest(
     price_fig = await _price_figure(repository, symbol, timeframe, start_dt, end_dt)
     trades_df = _trades_dataframe(result)
 
-    yield (summary_md, log, equity_fig, price_fig, trades_df)
+    yield _frame(log)
 
 
 def _emit_signal_breakdown(counts: dict[str, int]) -> str:
@@ -732,8 +667,7 @@ def render() -> None:
     # value before any handler can run. ``allow_custom_value=True`` is also
     # kept as a belt-and-braces fallback; the run handler always validates
     # via ``Dataset.parse``.
-    initial_datasets = list_datasets_sync()
-    initial_choices = [(ds.label, ds.value) for ds in initial_datasets]
+    initial_choices = dataset_choices_sync()
     initial_value = initial_choices[0][1] if initial_choices else None
 
     with gr.Row(elem_classes=["ck-screen-cols"]):

@@ -258,6 +258,33 @@ def list_datasets_sync() -> list[Dataset]:
     ]
 
 
+async def dataset_choices() -> list[tuple[str, str]]:
+    """Return Gradio-friendly ``(label, value)`` pairs for a Dataset dropdown.
+
+    Shared by the Backtest / Suggest / Live tabs, which each own their own
+    dropdown instance (Gradio dropdowns can't be shared across tabs) but all
+    read the same ``list_datasets`` vocabulary.
+    """
+    return [(ds.label, ds.value) for ds in await list_datasets()]
+
+
+def dataset_choices_sync() -> list[tuple[str, str]]:
+    """Synchronous twin of :func:`dataset_choices` for use during ``render()``."""
+    return [(ds.label, ds.value) for ds in list_datasets_sync()]
+
+
+def select_dataset_value(current: str | None, choices: list[tuple[str, str]]) -> str | None:
+    """Pick which dropdown value to keep after a refresh.
+
+    Keeps ``current`` if it is still among ``choices``; otherwise falls back to
+    the first available value, or ``None`` when there are no datasets.
+    """
+    values = {value for _, value in choices}
+    if current in values:
+        return current
+    return choices[0][1] if choices else None
+
+
 async def flush_runtime() -> None:
     """Dispose the runtime's SQLite engine and rebuild the session factory.
 

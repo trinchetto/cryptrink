@@ -39,6 +39,7 @@ from cryptrink.web.tabs.backtest import (
     _format_date_axis,
     _subsample,
     autofill_dates,
+    run_backtest,
 )
 
 
@@ -198,3 +199,51 @@ class TestAutofillDates:
         assert isinstance(end, dict)
         assert start.get("value") == "2024-03-01"
         assert end.get("value") == "2024-05-15"
+
+
+class TestRunBacktestFrames:
+    """run_backtest streams full 5-output frames via the ``_frame`` closure.
+
+    Guards the de-dup that replaced ~14 explicit 5-tuple yields with
+    ``yield _frame(log)``: every frame must stay a 5-tuple whose non-log
+    outputs hold their empty/None defaults while only the log line advances.
+    The early-exit paths run entirely before any DB access, so no runtime is
+    needed.
+    """
+
+    async def _collect(self, *args: object) -> list[tuple[object, ...]]:
+        return [frame async for frame in run_backtest(*args)]
+
+    def _assert_default_frame(self, frame: tuple[object, ...]) -> str:
+        """Assert a 5-tuple with default (pre-run) outputs; return the log line."""
+        assert len(frame) == 5
+        summary, log, equity_fig, price_fig, trades_df = frame
+        assert summary == ""  # summary_md default
+        assert equity_fig is None  # equity_fig default
+        assert price_fig is None  # price_fig default
+        assert isinstance(trades_df, pd.DataFrame)
+        assert isinstance(log, str)
+        return log
+
+    @pytest.mark.asyncio
+    async def test_no_strategy_yields_starting_then_failure(self) -> None:
+        frames = await self._collect("", None, "2024-01-01", "2024-02-01", 1000.0)
+        assert len(frames) == 2
+        first_log = self._assert_default_frame(frames[0])
+        second_log = self._assert_default_frame(frames[1])
+        assert "starting" in first_log
+        assert "no strategy selected" in second_log
+
+    @pytest.mark.asyncio
+    async def test_no_dataset_yields_failure(self) -> None:
+        frames = await self._collect("SomeStrategy", None, "2024-01-01", "2024-02-01", 1000.0)
+        assert len(frames) == 2
+        assert "no dataset selected" in self._assert_default_frame(frames[1])
+
+    @pytest.mark.asyncio
+    async def test_malformed_dataset_yields_failure(self) -> None:
+        frames = await self._collect(
+            "SomeStrategy", "not-a-valid-value", "2024-01-01", "2024-02-01", 1000.0
+        )
+        assert len(frames) == 2
+        assert "malformed dataset value" in self._assert_default_frame(frames[1])

@@ -41,6 +41,7 @@ from cryptrink.web.state import (
     flush_runtime,
     get_runtime,
     get_symbol_choices,
+    list_datasets,
     list_datasets_sync,
     log_event,
     set_cached_symbols,
@@ -503,32 +504,19 @@ async def db_diagnostics() -> str:
         _emit(f"  db url is {db_url} (not a sqlite file)")
 
     # --- Row counts (the operator's actual question) -----------------
-    async with runtime.session_factory() as session:
-        stmt = (
-            select(
-                OHLCVModel.symbol,
-                OHLCVModel.timeframe,
-                func.count().label("candle_count"),
-                func.min(OHLCVModel.timestamp).label("earliest"),
-                func.max(OHLCVModel.timestamp).label("latest"),
-            )
-            .group_by(OHLCVModel.symbol, OHLCVModel.timeframe)
-            .order_by(OHLCVModel.symbol, OHLCVModel.timeframe)
-        )
-        rows = list((await session.execute(stmt)).all())
-
-    if not rows:
+    # Reuse the shared summary query (state.list_datasets) rather than repeating
+    # the GROUP BY here; Dataset already parses the epoch-ms bounds to datetimes.
+    datasets = await list_datasets()
+    if not datasets:
         _emit("  ohlcv: 0 (symbol, timeframe) groups")
     else:
-        _emit(f"  ohlcv: {len(rows)} (symbol, timeframe) groups")
-        for row in rows:
-            earliest = datetime.fromtimestamp(int(row.earliest) / 1000, tz=UTC)
-            latest = datetime.fromtimestamp(int(row.latest) / 1000, tz=UTC)
+        _emit(f"  ohlcv: {len(datasets)} (symbol, timeframe) groups")
+        for ds in datasets:
             _emit(
-                f"    {row.symbol:<10} {row.timeframe:<4} "
-                f"{int(row.candle_count):>6} candles  "
-                f"{earliest.isoformat(timespec='seconds')} → "
-                f"{latest.isoformat(timespec='seconds')}"
+                f"    {ds.symbol:<10} {ds.timeframe:<4} "
+                f"{ds.candle_count:>6} candles  "
+                f"{ds.earliest.isoformat(timespec='seconds')} → "
+                f"{ds.latest.isoformat(timespec='seconds')}"
             )
 
     return _emit(f"diagnostics: COMPLETE in {_format_elapsed(started)}")
