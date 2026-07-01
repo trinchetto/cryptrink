@@ -9,10 +9,13 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode
 
 import httpx
+
+if TYPE_CHECKING:
+    from cryptrink.core.config import RevolutXSettings
 
 from cryptrink.core.logging import get_logger
 from cryptrink.exchange.auth import RevolutXAuth
@@ -148,6 +151,29 @@ class RevolutXExchange(BaseExchange):
             ticker = await exchange.get_ticker("BTC-EUR")
             print(f"BTC price: {ticker.last}")
     """
+
+    @classmethod
+    def from_settings(cls, revolutx: "RevolutXSettings") -> "RevolutXExchange":
+        """Build an (unconnected) client from a ``RevolutXSettings`` config section.
+
+        Resolves the Ed25519 private key via ``revolutx.get_private_key()`` (inline
+        base64 or a PEM file) and wires the API key + base URL. The caller still owns
+        the connection lifecycle — ``await exchange.connect()`` / ``exchange.close()``.
+
+        Args:
+            revolutx: The ``settings.revolutx`` configuration section.
+
+        Returns:
+            A constructed but not-yet-connected ``RevolutXExchange``.
+
+        Raises:
+            ValueError: If no usable private key is configured.
+        """
+        return cls(
+            api_key=revolutx.api_key.get_secret_value(),
+            private_key_base64=revolutx.get_private_key(),
+            base_url=revolutx.base_url,
+        )
 
     def __init__(
         self,

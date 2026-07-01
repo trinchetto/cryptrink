@@ -340,17 +340,10 @@ async def preflight_order(dataset_value: str | None, initial_balance: float) -> 
 
     from cryptrink.exchange.revolutx import RevolutXExchange
 
-    revolutx = runtime.settings.revolutx
     try:
-        private_key_b64 = revolutx.get_private_key()
+        exchange = RevolutXExchange.from_settings(runtime.settings.revolutx)
     except ValueError as exc:
         return f"❌ **Failed to load private key:** {exc}"
-
-    exchange = RevolutXExchange(
-        api_key=revolutx.api_key.get_secret_value(),
-        private_key_base64=private_key_b64,
-        base_url=revolutx.base_url,
-    )
 
     try:
         await exchange.connect()
@@ -427,17 +420,10 @@ async def test_connection(symbol: str) -> str:
 
     from cryptrink.exchange.revolutx import RevolutXExchange
 
-    revolutx = runtime.settings.revolutx
     try:
-        private_key_b64 = revolutx.get_private_key()
+        exchange = RevolutXExchange.from_settings(runtime.settings.revolutx)
     except ValueError as exc:
         raise gr.Error(f"Failed to load private key: {exc}") from exc
-
-    exchange = RevolutXExchange(
-        api_key=revolutx.api_key.get_secret_value(),
-        private_key_base64=private_key_b64,
-        base_url=revolutx.base_url,
-    )
 
     try:
         try:

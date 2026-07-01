@@ -105,12 +105,7 @@ async def build_live_components(
         from cryptrink.exchange.revolutx import RevolutXExchange
         from cryptrink.execution.live import LiveExecutor
 
-        private_key_b64 = settings.revolutx.get_private_key()
-        exchange = RevolutXExchange(
-            api_key=settings.revolutx.api_key.get_secret_value(),
-            private_key_base64=private_key_b64,
-            base_url=settings.revolutx.base_url,
-        )
+        exchange = RevolutXExchange.from_settings(settings.revolutx)
         await exchange.connect()
         executor = LiveExecutor(exchange_client=exchange)
         data_feed = HybridDataFeed(exchange=exchange, repository=repository)
