@@ -7,7 +7,9 @@ import httpx
 import pytest
 import respx
 from nacl.signing import SigningKey
+from pydantic import SecretStr
 
+from cryptrink.core.config import RevolutXSettings
 from cryptrink.exchange.base import (
     AuthenticationError,
     ExchangeError,
@@ -47,6 +49,31 @@ def exchange(private_key_base64: str) -> RevolutXExchange:
         private_key_base64=private_key_base64,
         timeout=10.0,
     )
+
+
+class TestFromSettings:
+    """Tests for the RevolutXExchange.from_settings factory."""
+
+    def test_builds_client_from_settings(self, private_key_base64: str) -> None:
+        """A populated RevolutXSettings section builds a working (unconnected) client."""
+        settings = RevolutXSettings(
+            api_key=SecretStr("test-api-key"),
+            private_key=SecretStr(private_key_base64),
+            base_url="https://example.test/api/1.0",
+        )
+
+        exchange = RevolutXExchange.from_settings(settings)
+
+        assert exchange.name == "revolut_x"
+        assert exchange._api_key == "test-api-key"
+        assert exchange._base_url == "https://example.test/api/1.0"
+
+    def test_raises_when_no_private_key(self) -> None:
+        """No inline key and no key file → get_private_key raises ValueError."""
+        settings = RevolutXSettings(api_key=SecretStr("test-api-key"))
+
+        with pytest.raises(ValueError):
+            RevolutXExchange.from_settings(settings)
 
 
 class TestRevolutXExchangeProperties:

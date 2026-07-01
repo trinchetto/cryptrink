@@ -252,18 +252,11 @@ async def backfill(
         yield _emit_failure("backfill: timeframe not supported by /candles", exc)
         return
 
-    revolutx = runtime.settings.revolutx
     try:
-        private_key_b64 = revolutx.get_private_key()
+        exchange = RevolutXExchange.from_settings(runtime.settings.revolutx)
     except ValueError as exc:
         yield _emit_failure("backfill: failed to load private key", exc)
         return
-
-    exchange = RevolutXExchange(
-        api_key=revolutx.api_key.get_secret_value(),
-        private_key_base64=private_key_b64,
-        base_url=revolutx.base_url,
-    )
 
     since_ms = int(start_dt.timestamp() * 1000)
     until_ms = int(end_dt.timestamp() * 1000)
@@ -684,17 +677,10 @@ async def refresh_symbols(current: str) -> tuple[object, str]:
 
     from cryptrink.exchange.revolutx import RevolutXExchange
 
-    revolutx = runtime.settings.revolutx
     try:
-        private_key_b64 = revolutx.get_private_key()
+        exchange = RevolutXExchange.from_settings(runtime.settings.revolutx)
     except ValueError as exc:
         return gr.update(), _emit_failure("symbols: failed to load private key", exc)
-
-    exchange = RevolutXExchange(
-        api_key=revolutx.api_key.get_secret_value(),
-        private_key_base64=private_key_b64,
-        base_url=revolutx.base_url,
-    )
 
     _emit("symbols: connecting to Revolut X /configuration/pairs…")
     started = time.perf_counter()

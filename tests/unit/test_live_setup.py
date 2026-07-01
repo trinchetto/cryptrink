@@ -146,7 +146,8 @@ class TestBuildLiveComponentsLiveMode:
             exchange_inst = MagicMock()
             exchange_inst.connect = AsyncMock()
             exchange_inst.close = AsyncMock()
-            MockExchange.return_value = exchange_inst
+            # build_live_components constructs via the RevolutXExchange.from_settings factory.
+            MockExchange.from_settings.return_value = exchange_inst
 
             engine_inst = MagicMock()
             engine_inst.start = AsyncMock()
