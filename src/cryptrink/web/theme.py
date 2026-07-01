@@ -22,9 +22,20 @@ _FONTS_HEAD = (
 # is neutralised inside #ck-root so the custom grid shows through.
 _BASE_CSS = """
 /* ---- gradio container reset ---- */
+/* Constrain the whole ancestor chain to the viewport. #ck-root is height:100vh, but
+   gradio's own wrappers (html/body/gradio-app/.gradio-container) size to content and
+   added ~32px around it, so the page overflowed and the docked terminal was pushed
+   off-screen (worse under gradio 6.19 SSR). Pin each to the viewport + clip so the
+   only scrolling happens inside #ck-root's columns/terminal. */
+html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; }
 #ck-style-inject { display: none !important; }
-gradio-app { background: var(--bg); }
-.gradio-container { max-width: 100% !important; padding: 0 !important; margin: 0 !important; }
+gradio-app { background: var(--bg); display: block; height: 100vh; overflow: hidden; }
+.gradio-container { max-width: 100% !important; padding: 0 !important; margin: 0 !important;
+  height: 100vh !important; overflow: hidden !important; }
+/* gradio 6.19 wraps the app in a `.main.fillable.app` div that carries 16px padding.
+   That padding sat *outside* .gradio-container's reset and pushed #ck-root (height:100vh)
+   down 16px, so the docked terminal's bottom landed past the viewport. Zero it. */
+.gradio-container > .fillable { padding: 0 !important; }
 footer { display: none !important; }
 
 #ck-root {
@@ -49,7 +60,10 @@ footer { display: none !important; }
      the terminal stays pinned at the bottom. With min-height, tall screen content
      grew the page and pushed the terminal far below the fold. */
   min-width: 1180px; height: 100vh; overflow: hidden;
-  display: grid; grid-template-rows: auto auto 1fr auto;
+  /* gap:0 — gradio's gr.Column defaults to a 16px gap; across the 4 rows that added
+     48px, spacing the sections apart and overflowing the viewport (clipping the
+     docked terminal). The header/banner/body/terminal should sit flush. */
+  display: grid; grid-template-rows: auto auto 1fr auto; gap: 0;
   background: var(--bg); color: var(--text);
   font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 13px;
 }
@@ -175,6 +189,9 @@ footer { display: none !important; }
 .ck-rail-row { display: flex; justify-content: space-between; padding: 5px 0; font-size: 12px; }
 
 /* ---- docked terminal ---- */
+/* Zero the gr.Column default 16px gap so head + body sit flush (otherwise the extra
+   gap inflated this row and clipped the terminal past the viewport). */
+#ck-root .ck-term { gap: 0 !important; }
 .ck-term-head { display: flex; align-items: center; gap: 12px; height: 34px; padding: 0 14px;
   border-top: 1px solid var(--border); background: var(--surface); }
 .ck-term-title { font-size: 11.5px; font-weight: 600; }
