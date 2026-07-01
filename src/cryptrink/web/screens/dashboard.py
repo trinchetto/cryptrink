@@ -95,8 +95,12 @@ async def refresh() -> tuple[str, pd.DataFrame, pd.DataFrame]:
     return html_block, positions, orders
 
 
-def render() -> None:
-    """Render the Dashboard screen panel inside the workspace shell."""
+def render() -> list[gr.Timer]:
+    """Render the Dashboard screen panel inside the workspace shell.
+
+    Returns the screen-owned refresh timer(s) so the shell can gate them active only
+    while the Dashboard is the visible screen.
+    """
     metrics_output = gr.HTML(metrics_html("—", "—", "—", "—"))
     with gr.Group(elem_classes=["ck-card"]):
         gr.HTML('<div class="ck-card-title">Open positions</div>')
@@ -113,5 +117,6 @@ def render() -> None:
             return gr.update(), gr.update(), gr.update()
         return await refresh()
 
-    timer = gr.Timer(5.0)
+    timer = gr.Timer(5.0, active=False)
     timer.tick(fn=_tick, inputs=None, outputs=outputs)
+    return [timer]
