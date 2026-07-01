@@ -359,7 +359,7 @@ def render() -> None:
             metrics_output = gr.HTML(_empty_metrics_html())
             with gr.Group(elem_classes=["ck-card"]):
                 gr.HTML('<div class="ck-card-title">Aggregate equity curve</div>')
-                equity_output = gr.Plot()
+                equity_output = gr.Plot(elem_classes=["ck-plot"])
             with gr.Group(elem_classes=["ck-card"]):
                 gr.HTML('<div class="ck-card-title">Per-allocation breakdown</div>')
                 breakdown_output = gr.Dataframe(value=_empty_breakdown_df())

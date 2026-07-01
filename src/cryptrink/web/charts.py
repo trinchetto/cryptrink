@@ -31,6 +31,12 @@ class ThemeColors:
     bg: str
 
 
+# Fixed plot height (px). Charts live in bounded, internally-scrolling columns, so a
+# fixed height (rather than autosize) both looks right and prevents the Plotly
+# ResizeObserver runaway described in ``_base_layout``.
+CHART_HEIGHT_PX = 320
+
+
 # The fixed Carbon palette (mirrors the CSS custom properties on ``#ck-root``).
 CARBON_COLORS = ThemeColors(
     accent="#3fd9a8",
@@ -47,6 +53,15 @@ CARBON_COLORS = ThemeColors(
 def _base_layout(colors: ThemeColors) -> dict[str, object]:
     """Shared transparent layout with a crosshair-style x spike and faint gridlines."""
     return {
+        # A FIXED pixel height with autosize off is load-bearing, not cosmetic. A
+        # responsive Plotly plot (autosize=True, the default) measures its container
+        # every frame; inside our flex/100vh shell the container height is derived
+        # from content, so plot->container->plot forms a ResizeObserver feedback loop
+        # that grows the page without bound and pins the main thread. This only fires
+        # once the plot has data (so it was invisible locally, fatal on the deployed
+        # Space). Pinning the height breaks the loop. Callers may override ``height``.
+        "height": CHART_HEIGHT_PX,
+        "autosize": False,
         "paper_bgcolor": "rgba(0,0,0,0)",
         "plot_bgcolor": "rgba(0,0,0,0)",
         "margin": {"l": 8, "r": 8, "t": 10, "b": 24},

@@ -21,21 +21,28 @@ _FONTS_HEAD = (
 # CSS variables. Gradio's default chrome (container max-width, block borders, gaps)
 # is neutralised inside #ck-root so the custom grid shows through.
 _BASE_CSS = """
-/* ---- gradio container reset ---- */
-/* Constrain the whole ancestor chain to the viewport. #ck-root is height:100vh, but
-   gradio's own wrappers (html/body/gradio-app/.gradio-container) size to content and
-   added ~32px around it, so the page overflowed and the docked terminal was pushed
-   off-screen (worse under gradio 6.19 SSR). Pin each to the viewport + clip so the
-   only scrolling happens inside #ck-root's columns/terminal. */
+/* ---- gradio container reset + iframe-safe height chain ----
+   On Hugging Face Spaces the app is embedded in a content-height-driven iframe
+   (Gradio's iframe-resizer). A viewport-relative height (100vh, and to a lesser
+   extent %) on any element resolves against the iframe's own viewport while the
+   resizer grows the frame from reported content height — a measure -> grow ->
+   re-measure feedback loop that makes the page grow without bound and pins the main
+   thread. This is deploy-only (fires only when Gradio detects `parentIFrame`) and was
+   the real "page grows infinitely, very fast" cause. See gradio #12089 / PR #13563;
+   abidlabs: "100vh in an embedded iframe is an anti-pattern — remove any 100vh
+   children." The safe pattern is a height:100% chain rooted on html/body so the shell
+   FILLS the frame instead of DRIVING it (identical standalone *.hf.space and embedded
+   huggingface.co). Every ancestor between <body> and #ck-root must carry a resolved
+   height for 100% to propagate, hence the wrapper rule (defensive: !important and
+   tolerant of gradio 6 SSR reshuffling the wrapper class names). */
 html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; }
+gradio-app { background: var(--bg); display: block; height: 100%; overflow: hidden; }
 #ck-style-inject { display: none !important; }
-gradio-app { background: var(--bg); display: block; height: 100vh; overflow: hidden; }
 .gradio-container { max-width: 100% !important; padding: 0 !important; margin: 0 !important;
-  height: 100vh !important; overflow: hidden !important; }
-/* gradio 6.19 wraps the app in a `.main.fillable.app` div that carries 16px padding.
-   That padding sat *outside* .gradio-container's reset and pushed #ck-root (height:100vh)
-   down 16px, so the docked terminal's bottom landed past the viewport. Zero it. */
-.gradio-container > .fillable { padding: 0 !important; }
+  height: 100% !important; overflow: hidden !important; }
+.gradio-container > .main, .gradio-container .fillable,
+.gradio-container > .main > .wrap, .gradio-container .contain {
+  height: 100% !important; min-height: 0 !important; padding: 0 !important; }
 footer { display: none !important; }
 
 #ck-root {
@@ -56,10 +63,11 @@ footer { display: none !important; }
   --live: #ef4658;
   --live-glow: rgba(239,70,88,0.5);
   --shadow: rgba(0,0,0,0.4);
-  /* Fixed to the viewport (not min-height) so the body row scrolls internally and
-     the terminal stays pinned at the bottom. With min-height, tall screen content
-     grew the page and pushed the terminal far below the fold. */
-  min-width: 1180px; height: 100vh; overflow: hidden;
+  /* height:100% (NOT 100vh): fills the iframe/tab without driving HF's iframe-resizer
+     (see the reset block above — 100vh here was the infinite-growth trigger).
+     min-height:0 lets the 1fr body row scroll internally so the docked terminal stays
+     pinned instead of being pushed below the fold. */
+  min-width: 1180px; height: 100%; max-height: 100%; min-height: 0; overflow: hidden;
   /* gap:0 — gradio's gr.Column defaults to a 16px gap; across the 4 rows that added
      48px, spacing the sections apart and overflowing the viewport (clipping the
      docked terminal). The header/banner/body/terminal should sit flush. */
@@ -74,6 +82,19 @@ footer { display: none !important; }
 .ck-mono, #ck-root .ck-mono { font-family: 'IBM Plex Mono', monospace; }
 .ck-pos { color: var(--pos); }
 .ck-neg { color: var(--neg); }
+
+/* ---- plotly runaway backstop ----
+   gr.Plot renders <div.js-plotly-plot><div.plot-container>. A responsive Plotly plot
+   (autosize=True, the default) measures its container every frame; inside a flex/fill
+   shell whose height is content-derived this forms a plot -> container -> plot
+   ResizeObserver loop that grows without bound (gradio #9068). charts._base_layout
+   already pins the figure to a fixed height + autosize:false; this is the defence-in-
+   depth CSS ceiling so the DOM can never grow past it even if a figure is ever built
+   without _base_layout. Keep this >= charts.CHART_HEIGHT_PX. */
+#ck-root .ck-plot, #ck-root .ck-plot .js-plotly-plot, #ck-root .ck-plot .plot-container,
+#ck-root .ck-plot .plotly, #ck-root .ck-plot .svg-container {
+  max-height: 340px !important; overflow: hidden !important;
+}
 
 /* ---- header ---- */
 .ck-header { display: flex; align-items: center; gap: 18px; height: 50px;

@@ -527,7 +527,7 @@ def render() -> list[gr.Timer]:
         with gr.Column(elem_classes=["ck-col-main"]):
             with gr.Group(elem_classes=["ck-card"]):
                 gr.HTML('<div class="ck-card-title">Price (stored candles)</div>')
-                chart_output = gr.Plot()
+                chart_output = gr.Plot(elem_classes=["ck-plot"])
             activity_output = gr.HTML(_activity_html(None))
 
         # ---- right: config + status ----
