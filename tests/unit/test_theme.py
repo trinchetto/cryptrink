@@ -25,9 +25,7 @@ class TestIframeSafeHeight:
         A viewport-relative height on the embedded shell is the infinite-growth trigger.
         """
         css_no_comments = _strip_comments(theme.build_css())
-        vh_declarations = re.findall(
-            r"[^;{}]*:\s*[^;{}]*100vh[^;{}]*", css_no_comments
-        )
+        vh_declarations = re.findall(r"[^;{}]*:\s*[^;{}]*100vh[^;{}]*", css_no_comments)
         assert vh_declarations == [], f"shell still uses 100vh: {vh_declarations}"
 
     def test_uses_height_100pct_chain(self) -> None:
