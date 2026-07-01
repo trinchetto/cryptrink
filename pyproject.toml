@@ -32,7 +32,7 @@ dependencies = [
     "cryptography>=49.0.0,<50.0",
 
     # Data validation & settings
-    "pydantic>=2.10,<3.0",
+    "pydantic>=2.13.4,<3.0",
     "pydantic-settings>=2.6,<3.0",
 
     # Data processing
@@ -44,7 +44,7 @@ dependencies = [
     "aiosqlite>=0.20,<1.0",
 
     # CLI
-    "typer>=0.26.7,<1.0",
+    "typer>=0.26.8,<1.0",
     "rich>=13.9,<14.0",
 
     # Logging
@@ -54,7 +54,7 @@ dependencies = [
     "pyyaml>=6.0,<7.0",
 
     # Scheduling
-    "apscheduler>=3.10,<4.0",
+    "apscheduler>=3.11.3,<4.0",
     "python-dotenv (>=1.2.2,<2.0.0)",
 
     # Visualization for backtesting
