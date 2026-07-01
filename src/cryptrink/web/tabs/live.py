@@ -500,8 +500,12 @@ _START_CONFIRM_JS = (
 )
 
 
-def render() -> None:
-    """Render the Live screen panel inside the workspace shell."""
+def render() -> list[gr.Timer]:
+    """Render the Live screen panel inside the workspace shell.
+
+    Returns the screen-owned refresh timers so the shell can gate them active only
+    while the Live screen is the visible screen.
+    """
     runtime = get_runtime()
     strategy_options = strategy_registry.list_strategies()
     default_strategy = (
@@ -593,7 +597,7 @@ def render() -> None:
             return gr.update(), gr.update()
         return refresh_status()
 
-    status_timer = gr.Timer(3.0)
+    status_timer = gr.Timer(3.0, active=False)
     status_timer.tick(fn=_status_tick, inputs=None, outputs=[activity_output, status_output])
 
     async def _chart_tick(dataset_value: str | None) -> object:
@@ -601,7 +605,7 @@ def render() -> None:
             return gr.update()
         return await load_candle_chart(dataset_value)
 
-    chart_timer = gr.Timer(6.0)
+    chart_timer = gr.Timer(6.0, active=False)
     chart_timer.tick(fn=_chart_tick, inputs=[dataset_input], outputs=[chart_output])
 
     start_btn.click(
@@ -626,3 +630,5 @@ def render() -> None:
         preflight_btn.click(
             fn=preflight_order, inputs=[dataset_input, balance_input], outputs=[diag_output]
         ).then(fn=lambda: gr.update(visible=True), outputs=[diag_output])
+
+    return [status_timer, chart_timer]

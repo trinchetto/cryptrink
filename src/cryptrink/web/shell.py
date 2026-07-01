@@ -326,7 +326,9 @@ async def startup_sync() -> tuple[str, str]:
     return _header_now(), _rail_now()
 
 
-def build_workspace(demo: gr.Blocks, screen_builders: dict[str, Callable[[], None]]) -> None:
+def build_workspace(
+    demo: gr.Blocks, screen_builders: dict[str, Callable[[], list[gr.Timer] | None]]
+) -> None:
     """Build the whole workspace inside an open ``gr.Blocks`` context.
 
     ``screen_builders`` maps a screen key (see :data:`SCREEN_ORDER`) to the function
@@ -354,6 +356,7 @@ def build_workspace(demo: gr.Blocks, screen_builders: dict[str, Callable[[], Non
         # ---- body: sidebar | main | rail ----
         nav_buttons: dict[str, gr.Button] = {}
         panels: dict[str, gr.Group] = {}
+        screen_timers: dict[str, list[gr.Timer]] = {}
         with gr.Row(elem_classes=["ck-body"]):
             with gr.Column(elem_classes=["ck-sidebar"], scale=0):
                 for group in NAV_GROUPS:
@@ -372,7 +375,7 @@ def build_workspace(demo: gr.Blocks, screen_builders: dict[str, Callable[[], Non
                     with gr.Group(
                         visible=(key == DEFAULT_SCREEN), elem_classes=["ck-screen-body"]
                     ) as panel:
-                        screen_builders[key]()
+                        screen_timers[key] = screen_builders[key]() or []
                     panels[key] = panel
             with gr.Column(elem_classes=["ck-rail"], scale=0):
                 rail = gr.HTML(_rail_now(), elem_id="ck-rail")
@@ -393,7 +396,7 @@ def build_workspace(demo: gr.Blocks, screen_builders: dict[str, Callable[[], Non
             term_body = gr.HTML(
                 terminal_html(web_state.get_log_events("all")), elem_classes=["ck-term-shell"]
             )
-            term_timer = gr.Timer(1.0)
+            term_timer = gr.Timer(2.0)
 
         # ---- confirm dialog overlay (paper -> live) ----
         # Standard Gradio modal: a Group toggled with gr.update(visible=...). This modal
@@ -458,11 +461,16 @@ def build_workspace(demo: gr.Blocks, screen_builders: dict[str, Callable[[], Non
     modal_cancel.click(fn=None, js=hide_modal_js)
 
     # ---- wiring: screen switching ----
+    # Flat, stable-ordered list of every screen-owned timer (SCREEN_ORDER-major). Clicking
+    # a nav item flips only the target screen's timers active; all others go inactive, so
+    # off-screen timers stop firing SSE round-trips entirely.
+    gated_timers = [(k, t) for k in SCREEN_ORDER for t in screen_timers[k]]
     switch_outputs = (
         [panels[s] for s in SCREEN_ORDER]
         + [screen_header]
         + [nav_buttons[s] for s in SCREEN_ORDER]
         + [screen_state]
+        + [t for _, t in gated_timers]
     )
 
     def _make_select(target: str) -> Callable[[], list[object]]:
@@ -473,7 +481,8 @@ def build_workspace(demo: gr.Blocks, screen_builders: dict[str, Callable[[], Non
             panel_updates = [gr.update(visible=(s == target)) for s in SCREEN_ORDER]
             nav_updates = [gr.update(elem_classes=_nav_classes(s == target)) for s in SCREEN_ORDER]
             header = screen_header_html(target, web_state.get_last_synced(target))
-            return [*panel_updates, header, *nav_updates, target]
+            timer_updates = [gr.update(active=(k == target)) for k, _ in gated_timers]
+            return [*panel_updates, header, *nav_updates, target, *timer_updates]
 
         return _select
 
@@ -508,7 +517,7 @@ def build_workspace(demo: gr.Blocks, screen_builders: dict[str, Callable[[], Non
 
     # ---- wiring: automation (startup sync + live chrome refresh) ----
     demo.load(fn=startup_sync, inputs=None, outputs=[header_left, rail])
-    chrome_timer = gr.Timer(4.0)
+    chrome_timer = gr.Timer(8.0)
     chrome_timer.tick(
         fn=lambda: (_header_now(), _rail_now()), inputs=None, outputs=[header_left, rail]
     )
