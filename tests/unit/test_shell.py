@@ -36,7 +36,9 @@ class TestNavModel:
     def test_group_labels(self):
         from cryptrink.web import shell
 
-        assert [g.label for g in shell.NAV_GROUPS] == ["Research", "Trade", "Monitor", "System"]
+        # Suggest folded into Backtest and Dashboard into Live (pass 4), so the
+        # "Monitor" group is gone and neither has its own sidebar entry.
+        assert [g.label for g in shell.NAV_GROUPS] == ["Research", "Trade", "System"]
 
     def test_screen_order_matches_prototype(self):
         from cryptrink.web import shell
@@ -44,9 +46,7 @@ class TestNavModel:
         assert shell.SCREEN_ORDER == [
             "backtest",
             "portfolio",
-            "suggest",
             "live",
-            "dashboard",
             "data",
             "settings",
         ]

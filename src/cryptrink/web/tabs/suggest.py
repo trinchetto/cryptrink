@@ -193,8 +193,13 @@ async def suggest_and_render(strategy_name: str, dataset_value: str | None) -> s
 # ----------------------------------------------------------------------
 
 
-def render() -> None:
-    """Render the Suggest screen panel inside the workspace shell."""
+def render_section() -> None:
+    """Render the Suggest tool as a stacked section (folded into the Backtest screen).
+
+    Suggest no longer owns a sidebar screen; :func:`cryptrink.web.tabs.backtest.render`
+    calls this after the backtest layout so the one-shot suggestion lives alongside the
+    full backtest, which shares the same strategy + dataset inputs conceptually.
+    """
     runtime = get_runtime()
     strategy_options = strategy_registry.list_strategies()
     default_strategy = (
@@ -206,6 +211,11 @@ def render() -> None:
     initial_value = initial_choices[0][1] if initial_choices else None
 
     with gr.Column(elem_classes=["ck-col-main"]):
+        gr.HTML(
+            '<div class="ck-section-label" style="margin-top:6px">'
+            "Suggest — one-shot trade suggestion from the latest candle (no order placed)"
+            "</div>"
+        )
         with gr.Group(elem_classes=["ck-card"]), gr.Row():
             strategy_input = gr.Dropdown(
                 choices=strategy_options, value=default_strategy, label="Strategy"
