@@ -27,12 +27,13 @@ from cryptrink.web.live_loop import LiveLoop, LiveLoopState, get_active_loop, se
 from cryptrink.web.live_setup import LiveMode, build_live_components, has_revolutx_credentials
 from cryptrink.web.state import (
     Dataset,
+    dataset_choices,
+    dataset_choices_sync,
     get_active_screen,
     get_mode,
     get_runtime,
-    list_datasets,
-    list_datasets_sync,
     log_event,
+    select_dataset_value,
 )
 
 if TYPE_CHECKING:
@@ -69,18 +70,10 @@ def _build_discord_callback(
     return callback
 
 
-async def _dataset_choices() -> list[tuple[str, str]]:
-    return [(ds.label, ds.value) for ds in await list_datasets()]
-
-
 async def refresh_datasets(current: str | None) -> object:
     """Re-query the OHLCV table and update this screen's Dataset dropdown."""
-    choices = await _dataset_choices()
-    if not choices:
-        return gr.update(choices=[], value=None)
-    values = {value for _, value in choices}
-    new_value = current if current in values else choices[0][1]
-    return gr.update(choices=choices, value=new_value)
+    choices = await dataset_choices()
+    return gr.update(choices=choices, value=select_dataset_value(current, choices))
 
 
 async def _load_candles(dataset_value: str | None) -> list[dict[str, object]]:
@@ -504,8 +497,7 @@ def render() -> list[gr.Timer]:
         runtime.settings.notifications.discord_webhook_url.get_secret_value()
     )
 
-    initial_datasets = list_datasets_sync()
-    initial_choices = [(ds.label, ds.value) for ds in initial_datasets]
+    initial_choices = dataset_choices_sync()
     initial_value = initial_choices[0][1] if initial_choices else None
 
     with gr.Row(elem_classes=["ck-screen-cols"]):

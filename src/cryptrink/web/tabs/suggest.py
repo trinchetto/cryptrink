@@ -23,25 +23,23 @@ from cryptrink.runtime import resolve_strategy
 from cryptrink.strategies import registry as strategy_registry
 from cryptrink.strategies.base import StrategyContext
 from cryptrink.web import components
-from cryptrink.web.state import Dataset, get_runtime, list_datasets, list_datasets_sync
+from cryptrink.web.state import (
+    Dataset,
+    dataset_choices,
+    dataset_choices_sync,
+    get_runtime,
+    select_dataset_value,
+)
 
 # ----------------------------------------------------------------------
 # Dataset dropdown plumbing (per-tab; see backtest.py for the rationale)
 # ----------------------------------------------------------------------
 
 
-async def _dataset_choices() -> list[tuple[str, str]]:
-    return [(ds.label, ds.value) for ds in await list_datasets()]
-
-
 async def refresh_datasets(current: str | None) -> object:
     """Re-query the OHLCV table and update this tab's Dataset dropdown."""
-    choices = await _dataset_choices()
-    if not choices:
-        return gr.update(choices=[], value=None)
-    values = {value for _, value in choices}
-    new_value = current if current in values else choices[0][1]
-    return gr.update(choices=choices, value=new_value)
+    choices = await dataset_choices()
+    return gr.update(choices=choices, value=select_dataset_value(current, choices))
 
 
 # ----------------------------------------------------------------------
@@ -204,8 +202,7 @@ def render() -> None:
         if runtime.settings.default_strategy in strategy_options
         else (strategy_options[0] if strategy_options else None)
     )
-    initial_datasets = list_datasets_sync()
-    initial_choices = [(ds.label, ds.value) for ds in initial_datasets]
+    initial_choices = dataset_choices_sync()
     initial_value = initial_choices[0][1] if initial_choices else None
 
     with gr.Column(elem_classes=["ck-col-main"]):
