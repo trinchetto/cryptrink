@@ -95,12 +95,15 @@ async def refresh() -> tuple[str, pd.DataFrame, pd.DataFrame]:
     return html_block, positions, orders
 
 
-def render() -> list[gr.Timer]:
-    """Render the Dashboard screen panel inside the workspace shell.
+def render_section() -> list[gr.Timer]:
+    """Render the monitoring dashboard as a stacked section (folded into the Live screen).
 
-    Returns the screen-owned refresh timer(s) so the shell can gate them active only
-    while the Dashboard is the visible screen.
+    Dashboard no longer owns a sidebar screen; :func:`cryptrink.web.tabs.live.render`
+    calls this and includes the returned timer in its own list so the shell gates it
+    active only while Live is visible. The timer therefore checks for ``"live"`` (its
+    host screen), not ``"dashboard"``.
     """
+    gr.HTML('<div class="ck-section-label" style="margin-top:6px">Monitoring</div>')
     metrics_output = gr.HTML(metrics_html("—", "—", "—", "—"))
     with gr.Group(elem_classes=["ck-card"]):
         gr.HTML('<div class="ck-card-title">Open positions</div>')
@@ -112,8 +115,8 @@ def render() -> list[gr.Timer]:
     outputs = [metrics_output, positions_output, orders_output]
 
     async def _tick() -> tuple[object, object, object]:
-        # Skip the (3-query) DB refresh unless the Dashboard is the visible screen.
-        if get_active_screen() != "dashboard":
+        # Skip the (3-query) DB refresh unless the host Live screen is visible.
+        if get_active_screen() != "live":
             return gr.update(), gr.update(), gr.update()
         return await refresh()
 

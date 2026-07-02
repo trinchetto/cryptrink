@@ -55,6 +55,7 @@ from cryptrink.web.state import (
     log_event,
     select_dataset_value,
 )
+from cryptrink.web.tabs import suggest
 from cryptrink.web.tabs.backtest_tuning import (
     ManualPanel,
     TuningPanel,
@@ -854,3 +855,8 @@ def render() -> None:
         inputs=[strategy_input, opt_result_state],
         outputs=manual_components,
     )
+
+    # Suggest is folded into the Backtest screen as a stacked section (pass 4 of the
+    # UI simplification): it shares the same strategy/dataset mental model and is a
+    # lightweight one-shot companion to a full backtest.
+    suggest.render_section()

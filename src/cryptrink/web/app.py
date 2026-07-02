@@ -8,9 +8,9 @@ import gradio as gr
 
 from cryptrink.core.logging import get_logger
 from cryptrink.web import shell, theme
-from cryptrink.web.screens import dashboard, settings
+from cryptrink.web.screens import settings
 from cryptrink.web.state import get_runtime
-from cryptrink.web.tabs import backtest, data, live, portfolio, suggest
+from cryptrink.web.tabs import backtest, data, live, portfolio
 
 if TYPE_CHECKING:
     from cryptrink.core.config import Settings
@@ -73,11 +73,11 @@ def build_demo() -> gr.Blocks:
         shell.build_workspace(
             demo,
             {
+                # Suggest is rendered inside backtest.render (stacked section) and
+                # Dashboard inside live.render, so neither is a top-level screen.
                 "backtest": backtest.render,
                 "portfolio": portfolio.render,
-                "suggest": suggest.render,
                 "live": live.render,
-                "dashboard": dashboard.render,
                 "data": data.render,
                 "settings": settings.render,
             },

@@ -50,11 +50,9 @@ NAV_GROUPS: tuple[NavGroup, ...] = (
         "Research",
         (NavItem("backtest", "BT", "Backtest"), NavItem("portfolio", "PF", "Portfolio")),
     ),
-    NavGroup(
-        "Trade",
-        (NavItem("suggest", "SG", "Suggest"), NavItem("live", "LV", "Live")),
-    ),
-    NavGroup("Monitor", (NavItem("dashboard", "DB", "Dashboard"),)),
+    # Suggest folds into the Backtest screen and Dashboard folds into Live (both as
+    # stacked sections), so neither has its own sidebar entry / screen panel.
+    NavGroup("Trade", (NavItem("live", "LV", "Live"),)),
     NavGroup(
         "System",
         (NavItem("data", "DT", "Data"), NavItem("settings", "ST", "Settings")),
@@ -69,10 +67,6 @@ DEFAULT_SCREEN = "portfolio"
 
 # title + subtitle for the sticky screen header, verbatim from the prototype.
 SCREEN_META: dict[str, tuple[str, str]] = {
-    "dashboard": (
-        "Dashboard",
-        "Engine state, open positions, and order history across paper and live sessions.",
-    ),
     "backtest": (
         "Backtest",
         "Replay a single strategy over a stored dataset. Tune by hand or sweep with the optimizer.",
@@ -81,10 +75,6 @@ SCREEN_META: dict[str, tuple[str, str]] = {
         "Portfolio",
         "Build a multi-pair portfolio sharing one cash pool, then backtest the whole "
         "allocation in one run.",
-    ),
-    "suggest": (
-        "Suggest",
-        "Generate a one-shot trade suggestion from the latest stored candle. No order is placed.",
     ),
     "live": (
         "Live trading",

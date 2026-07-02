@@ -25,6 +25,7 @@ from cryptrink.strategies.base import SignalType
 from cryptrink.web import charts, components
 from cryptrink.web.live_loop import LiveLoop, LiveLoopState, get_active_loop, set_active_loop
 from cryptrink.web.live_setup import LiveMode, build_live_components, has_revolutx_credentials
+from cryptrink.web.screens import dashboard
 from cryptrink.web.state import (
     Dataset,
     dataset_choices,
@@ -609,4 +610,9 @@ def render() -> list[gr.Timer]:
             fn=preflight_order, inputs=[dataset_input, balance_input], outputs=[diag_output]
         ).then(fn=lambda: gr.update(visible=True), outputs=[diag_output])
 
-    return [status_timer, chart_timer]
+    # Dashboard is folded into the Live screen as a stacked monitoring section (pass 4).
+    # Its refresh timer is returned alongside Live's own so the shell gates all three
+    # active only while Live is visible.
+    dashboard_timers = dashboard.render_section()
+
+    return [status_timer, chart_timer, *dashboard_timers]
