@@ -16,11 +16,16 @@ from typing import TYPE_CHECKING
 import gradio as gr
 
 from cryptrink.web import state as web_state
+from cryptrink.web.components import euro
 from cryptrink.web.live_loop import get_active_loop
 from cryptrink.web.live_setup import has_revolutx_credentials
+from cryptrink.web.screens import dashboard
+from cryptrink.web.tabs import status
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    import pandas as pd
 
     from cryptrink.web.state import LogEvent
 
@@ -45,24 +50,29 @@ class NavGroup:
     items: tuple[NavItem, ...]
 
 
+# The three sections in dependency-pipeline order: Data (the fuel) → Portfolio design
+# (build & validate strategies/portfolios) → Live (run them). Suggest folds into the
+# Backtest screen and Dashboard folds into Live (both stacked sections), so neither has
+# its own sidebar entry. Settings is reached via the header gear, not the sidebar, so it
+# is absent here — see ``SCREEN_ORDER``.
 NAV_GROUPS: tuple[NavGroup, ...] = (
+    NavGroup("Data", (NavItem("data", "DT", "Data"),)),
     NavGroup(
-        "Research",
+        "Portfolio design",
         (NavItem("backtest", "BT", "Backtest"), NavItem("portfolio", "PF", "Portfolio")),
     ),
-    # Suggest folds into the Backtest screen and Dashboard folds into Live (both as
-    # stacked sections), so neither has its own sidebar entry / screen panel.
-    NavGroup("Trade", (NavItem("live", "LV", "Live"),)),
-    NavGroup(
-        "System",
-        (NavItem("data", "DT", "Data"), NavItem("settings", "ST", "Settings")),
-    ),
+    NavGroup("Live", (NavItem("live", "LV", "Live"),)),
 )
 
-# Flattened screen order (sidebar top-to-bottom). Drives visibility-toggle lists.
-SCREEN_ORDER: list[str] = [item.key for group in NAV_GROUPS for item in group.items]
+# Sidebar-visible screens, top-to-bottom. Drives the nav-button rendering and the
+# active-item highlight (only these screens get a sidebar button).
+NAV_KEYS: list[str] = [item.key for group in NAV_GROUPS for item in group.items]
 
-# Default screen shown on boot (matches the prototype).
+# Every mounted panel, in visibility-toggle order: the sidebar screens plus Settings,
+# which is a real panel reached from the header gear rather than a sidebar entry.
+SCREEN_ORDER: list[str] = [*NAV_KEYS, "settings"]
+
+# Default screen shown on boot (the main design workspace).
 DEFAULT_SCREEN = "portfolio"
 
 # title + subtitle for the sticky screen header, verbatim from the prototype.
@@ -250,7 +260,7 @@ def rail_html(
 # ---------------------------------------------------------------------------
 # Gradio assembly
 # ---------------------------------------------------------------------------
-TERM_FILTERS = ("all", "sys", "data", "backtest", "live")
+TERM_FILTERS = ("all", "sys", "data", "backtest", "portfolio", "live")
 
 
 def _nav_classes(active: bool) -> list[str]:
@@ -261,29 +271,82 @@ def _chip_classes(active: bool) -> list[str]:
     return ["ck-chip", "ck-chip-active"] if active else ["ck-chip"]
 
 
-def _header_now() -> str:
-    """Current header HTML from runtime state (connection + last-synced stamp)."""
+def _header_now(balance: str = "—") -> str:
+    """Current header HTML from runtime state (connection + last-synced stamp).
+
+    ``balance`` is the account-equity string; callers with live engine state pass the
+    derived figure, everyone else gets the build-time ``—`` placeholder.
+    """
     runtime = web_state.get_runtime()
     connected = has_revolutx_credentials(runtime.settings)
-    return header_html("—", web_state.get_last_synced("datasets"), connected=connected)
+    return header_html(balance, web_state.get_last_synced("datasets"), connected=connected)
 
 
-def _rail_now() -> str:
-    """Current status-rail HTML (live-loop state + mode)."""
+def _rail_positions(positions: pd.DataFrame) -> list[tuple[str, str, str]]:
+    """Build ``(label, value, css)`` rail rows from the open positions in ``positions``.
+
+    Open positions have no live mark-to-market P&L in the stored snapshot, so we show
+    the held quantity rather than a coloured gain/loss.
+    """
+    if "status" not in positions or not len(positions):
+        return [("no positions", "", "")]
+    open_rows = positions[positions["status"] == "open"]
+    if not len(open_rows):
+        return [("no positions", "", "")]
+    rows: list[tuple[str, str, str]] = []
+    for _, pos in open_rows.head(5).iterrows():
+        side = str(pos.get("side", "")).upper()
+        label = f"{pos['symbol']} {side}".strip()
+        rows.append((label, f"{float(pos['quantity']):.4g}", ""))
+    return rows
+
+
+def _rail_now(
+    *,
+    open_pnl: str = "—",
+    positions_rows: list[tuple[str, str, str]] | None = None,
+) -> str:
+    """Current status-rail HTML (live-loop state + mode + derived P&L/positions)."""
     loop = get_active_loop()
     running = bool(loop is not None and loop.is_running)
     mode = web_state.get_mode()
     if running and loop is not None:
         snap = loop.snapshot()
         loop_sub = f"{mode} · {snap.symbol} · {snap.interval_seconds:.0f}s"
+        watchlist = [(snap.symbol or "—", mode.upper(), "")]
     else:
         loop_sub = "No active loop"
+        watchlist = [("—", "", "")]
     return rail_html(
         running=running,
         loop_sub=loop_sub,
-        today_rows=[("Mode", mode.upper(), ""), ("Unrealised P&L", "—", "")],
-        positions=[("—", "", "")],
-        watchlist=[("—", "", "")],
+        today_rows=[("Mode", mode.upper(), ""), ("Unrealised P&L", open_pnl, "")],
+        positions=positions_rows or [("no positions", "", "")],
+        watchlist=watchlist,
+    )
+
+
+async def _chrome_html() -> tuple[str, str]:
+    """Header + rail HTML with account equity / P&L / positions derived from the DB.
+
+    Reuses the same engine/position snapshot the folded Dashboard section reads
+    (:func:`status.refresh` + :func:`dashboard.derive_metrics`), so the header balance
+    and rail always agree with the dashboard. Empty/no-engine state renders ``€0.00``
+    and ``no positions`` rather than a bare dash. Best-effort: any read error falls back
+    to the placeholder chrome.
+    """
+    try:
+        engines, _orders, positions = await status.refresh()
+        metrics = dashboard.derive_metrics(engines, positions)
+    except Exception as exc:  # best-effort chrome refresh — never break the page
+        web_state.log_event("sys", "warn", f"chrome refresh failed: {exc}")
+        return _header_now(), _rail_now()
+    balance = metrics["account_equity"]
+    if balance == "—":
+        balance = euro(0.0)
+    return (
+        _header_now(balance),
+        _rail_now(open_pnl=metrics["open_pnl"], positions_rows=_rail_positions(positions)),
     )
 
 
@@ -313,7 +376,7 @@ async def startup_sync() -> tuple[str, str]:
         web_state.log_event("data", "warn", f"dataset sync failed: {exc}")
     web_state.mark_synced("datasets")
 
-    return _header_now(), _rail_now()
+    return await _chrome_html()
 
 
 def build_workspace(
@@ -333,6 +396,12 @@ def build_workspace(
         # ---- header ----
         with gr.Row(elem_classes=["ck-header"]):
             header_left = gr.HTML(_header_now(), elem_id="ck-header-left")
+            # Settings is a utility, not a workflow step, so it lives behind this header
+            # gear rather than in the sidebar. It opens the same panel via the shared
+            # screen-switch handler (wired below, once ``_make_select`` exists).
+            settings_gear = gr.Button(
+                "⚙", elem_id="ck-settings-gear", elem_classes=["ck-btn-secondary"], scale=0
+            )
 
         # ---- mode banner ----
         with gr.Row(elem_id="ck-banner-row"):
@@ -458,7 +527,7 @@ def build_workspace(
     switch_outputs = (
         [panels[s] for s in SCREEN_ORDER]
         + [screen_header]
-        + [nav_buttons[s] for s in SCREEN_ORDER]
+        + [nav_buttons[s] for s in NAV_KEYS]
         + [screen_state]
         + [t for _, t in gated_timers]
     )
@@ -469,7 +538,7 @@ def build_workspace(
             # their screen isn't visible (see Dashboard/Live timers).
             web_state.set_active_screen(target)
             panel_updates = [gr.update(visible=(s == target)) for s in SCREEN_ORDER]
-            nav_updates = [gr.update(elem_classes=_nav_classes(s == target)) for s in SCREEN_ORDER]
+            nav_updates = [gr.update(elem_classes=_nav_classes(s == target)) for s in NAV_KEYS]
             header = screen_header_html(target, web_state.get_last_synced(target))
             timer_updates = [gr.update(active=(k == target)) for k, _ in gated_timers]
             return [*panel_updates, header, *nav_updates, target, *timer_updates]
@@ -478,6 +547,10 @@ def build_workspace(
 
     for key, btn in nav_buttons.items():
         btn.click(fn=_make_select(key), inputs=None, outputs=switch_outputs)
+
+    # The header gear opens the Settings panel through the same switch machinery; it has
+    # no sidebar button, so no nav item highlights while Settings is shown.
+    settings_gear.click(fn=_make_select("settings"), inputs=None, outputs=switch_outputs)
 
     # ---- wiring: terminal ----
     def _render_term(active_filter: str) -> str:
@@ -508,6 +581,4 @@ def build_workspace(
     # ---- wiring: automation (startup sync + live chrome refresh) ----
     demo.load(fn=startup_sync, inputs=None, outputs=[header_left, rail])
     chrome_timer = gr.Timer(8.0)
-    chrome_timer.tick(
-        fn=lambda: (_header_now(), _rail_now()), inputs=None, outputs=[header_left, rail]
-    )
+    chrome_timer.tick(fn=_chrome_html, inputs=None, outputs=[header_left, rail])

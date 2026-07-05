@@ -22,7 +22,7 @@ A crypto trading agent for [Revolut X](https://www.revolut.com/business/revolut-
 
 **Phase 8 - CLI & User Experience: COMPLETE ✅**
 
-- CLI commands: `backtest`, `suggest`, `status`, `history`, `run` (placeholder)
+- CLI commands: `backtest`, `suggest`, `status`, `history`, `run` (the CLI `run` loop is still a placeholder — live/paper trading runs from the web UI's **Live** screen)
 - Rich table formatting for backtest results, trade suggestions, and history
 - Discord webhook notifier with trade alerts, position closures, daily summaries
 - Rate limiting and error handling for Discord notifications
