@@ -313,7 +313,7 @@ def _rail_now(
     if running and loop is not None:
         snap = loop.snapshot()
         loop_sub = f"{mode} · {snap.symbol} · {snap.interval_seconds:.0f}s"
-        watchlist = [(snap.symbol, mode.upper(), "")]
+        watchlist = [(snap.symbol or "—", mode.upper(), "")]
     else:
         loop_sub = "No active loop"
         watchlist = [("—", "", "")]
