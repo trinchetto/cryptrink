@@ -1,11 +1,10 @@
 """Tests for the Data tab's terminal log + handler outputs.
 
-The Data tab now writes every action to a single shared terminal log
+The Data tab writes every action to a single shared terminal log
 (``_LOG``); each handler returns the rendered code-block instead of
 populating a separate status component. The tests below assert each
 handler's contribution — both the log lines that get appended and the
-explicit Started / Completed markers around long DB ops — and the
-isolation guarantees of ``clear_log``.
+explicit Started / Completed markers around long DB ops.
 """
 
 from __future__ import annotations
@@ -95,13 +94,6 @@ class TestTerminalRendering:
         assert "line 49" not in "\n".join(data_tab._LOG)
         assert "line 249" in "\n".join(data_tab._LOG)
 
-    def test_clear_log_resets_buffer(self) -> None:
-        data_tab._emit("noise")
-        assert data_tab._LOG
-        out = data_tab.clear_log()
-        assert not data_tab._LOG
-        assert "empty terminal" in out
-
 
 class TestFormatDbSize:
     def test_in_memory_db(self) -> None:
@@ -130,61 +122,6 @@ class TestFormatDbSize:
 # ----------------------------------------------------------------------
 # Handlers
 # ----------------------------------------------------------------------
-
-
-class TestRefreshCounts:
-    @pytest.mark.asyncio
-    async def test_logs_started_and_completed_with_count(self) -> None:
-        _install_runtime(_settings())
-        out = await data_tab.refresh_counts("BTC-EUR", "1h")
-        assert "count: starting" in out
-        assert "count: COMPLETE" in out
-        assert "0 candles" in out
-
-    @pytest.mark.asyncio
-    async def test_empty_symbol_logs_failure(self) -> None:
-        _install_runtime(_settings())
-        out = await data_tab.refresh_counts("", "1h")
-        assert "FAILED" in out
-        assert "symbol is empty" in out
-
-
-class TestDatabaseOverview:
-    @pytest.mark.asyncio
-    async def test_empty_db_logs_zero_groups(self) -> None:
-        _install_runtime(_settings())
-        out = await data_tab.database_overview()
-        assert "overview: starting" in out
-        assert "0 (symbol, timeframe) groups" in out
-        assert "overview: COMPLETE" in out
-
-    @pytest.mark.asyncio
-    async def test_lists_one_line_per_group(self) -> None:
-        runtime = _install_runtime(_settings())
-        repo = OHLCVRepository(runtime.session_factory)
-        from cryptrink.cli.utils import init_db_schema
-
-        await init_db_schema(runtime.session_factory)
-        await repo.save_batch(
-            [
-                {
-                    "symbol": "BTC-EUR",
-                    "timeframe": "1h",
-                    "timestamp": 1_700_000_000_000 + i * 3_600_000,
-                    "open": Decimal("100"),
-                    "high": Decimal("110"),
-                    "low": Decimal("90"),
-                    "close": Decimal("105"),
-                    "volume": Decimal("1"),
-                }
-                for i in range(3)
-            ]
-        )
-
-        out = await data_tab.database_overview()
-        assert "1 (symbol, timeframe) groups" in out
-        assert "BTC-EUR" in out
-        assert "3 candles" in out
 
 
 class TestResetDatabase:
@@ -253,50 +190,6 @@ class TestResetDatabase:
         out = await data_tab.reset_database()
         assert "FAILED" in out
         assert "not a sqlite file" in out
-
-
-class TestDbDiagnostics:
-    @pytest.mark.asyncio
-    async def test_logs_pragmas_and_row_counts(self) -> None:
-        runtime = _install_runtime(_settings())
-        repo = OHLCVRepository(runtime.session_factory)
-        from cryptrink.cli.utils import init_db_schema
-
-        await init_db_schema(runtime.session_factory)
-        await repo.save_batch(
-            [
-                {
-                    "symbol": "BTC-EUR",
-                    "timeframe": "1h",
-                    "timestamp": 1_700_000_000_000 + i * 3_600_000,
-                    "open": Decimal("100"),
-                    "high": Decimal("110"),
-                    "low": Decimal("90"),
-                    "close": Decimal("105"),
-                    "volume": Decimal("1"),
-                }
-                for i in range(2)
-            ]
-        )
-
-        out = await data_tab.db_diagnostics()
-        assert "diagnostics: starting" in out
-        assert "diagnostics: COMPLETE" in out
-        # PRAGMAs we care about must appear with their values.
-        for key in ("journal_mode", "synchronous", "page_count", "freelist_count"):
-            assert f"PRAGMA {key} =" in out
-        # Per-pair row count surfaces in the same log.
-        assert "BTC-EUR" in out
-        assert "2 candles" in out
-
-    @pytest.mark.asyncio
-    async def test_force_checkpoint_runs_pragmas(self) -> None:
-        _install_runtime(_settings())
-        out = await data_tab.force_checkpoint()
-        assert "checkpoint: starting" in out
-        assert "checkpoint: COMPLETE" in out
-        assert "PRAGMA wal_checkpoint(FULL)" in out
-        assert "PRAGMA optimize" in out
 
 
 class TestWipe:
