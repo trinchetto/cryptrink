@@ -10,7 +10,7 @@ from cryptrink.core.logging import get_logger
 from cryptrink.web import shell, theme
 from cryptrink.web.screens import settings
 from cryptrink.web.state import get_runtime
-from cryptrink.web.tabs import backtest, data, live, portfolio
+from cryptrink.web.tabs import data, live, portfolio
 
 if TYPE_CHECKING:
     from cryptrink.core.config import Settings
@@ -73,12 +73,12 @@ def build_demo() -> gr.Blocks:
         shell.build_workspace(
             demo,
             {
-                # Suggest is rendered inside backtest.render (stacked section) and
-                # Dashboard inside live.render, so neither is a top-level screen.
-                "backtest": backtest.render,
+                # Backtest folds into the Portfolio Design screen as a collapsed
+                # "Optimize a single pair" section (which itself carries Suggest), and
+                # Dashboard folds into Live, so none of the three are top-level screens.
+                "data": data.render,
                 "portfolio": portfolio.render,
                 "live": live.render,
-                "data": data.render,
                 "settings": settings.render,
             },
         )

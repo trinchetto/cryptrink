@@ -79,6 +79,21 @@ footer { display: none !important; }
 #ck-root .block { border: none !important; background: transparent !important;
   box-shadow: none !important; padding: 0 !important; }
 #ck-root .form { border: none !important; background: transparent !important; }
+/* Gradio 6 paints gr.Group (.gr-group / its .styler child) with a default grey fill that
+   the .block/.form reset above misses, so screen-panel wrappers and any empty group shell
+   show as stray grey boxes. Neutralize the group fill, then re-assert the intended card
+   surface on .ck-card (the only groups meant to look like panels). */
+#ck-root .gr-group, #ck-root .gr-group > .styler { background: transparent !important;
+  border: none !important; box-shadow: none !important; }
+#ck-root .ck-card { background: var(--surface) !important; border: 1px solid var(--border) !important; }
+/* Gradio hides a screen panel by marking its inner .ck-screen-cols row `.hide`
+   (display:none) but leaves the .ck-screen-body group shell visible — a stray empty box.
+   Collapse any screen-body whose columns are *all* hidden. The ":not(:has(cols:not(.hide)))"
+   guard keeps the active panel (which always has at least one visible cols) — and any
+   nested cols, e.g. the folded single-pair backtest inside Portfolio Design — untouched. */
+#ck-root .ck-screen-body:has(.ck-screen-cols.hide):not(:has(.ck-screen-cols:not(.hide))) {
+  display: none !important;
+}
 .ck-mono, #ck-root .ck-mono { font-family: 'IBM Plex Mono', monospace; }
 .ck-pos { color: var(--pos); }
 .ck-neg { color: var(--neg); }
@@ -143,8 +158,6 @@ footer { display: none !important; }
 .ck-body > * { min-width: 0 !important; min-height: 0 !important; overflow-y: auto; }
 .ck-sidebar { border-right: 1px solid var(--border); background: var(--surface);
   padding: 14px 10px; display: flex; flex-direction: column; gap: 4px; }
-.ck-nav-group-label { font-size: 9.5px; font-weight: 600; letter-spacing: 1.2px;
-  color: var(--faint); text-transform: uppercase; padding: 13px 9px 5px; }
 .ck-nav-item button, button.ck-nav-item { display: flex !important; align-items: center; gap: 9px;
   width: 100%; padding: 8px 9px !important; border: none !important; border-radius: 8px !important;
   text-align: left !important; justify-content: flex-start !important;
@@ -173,6 +186,10 @@ footer { display: none !important; }
 .ck-card-title { font-size: 12.5px; font-weight: 600; margin-bottom: 10px; }
 .ck-section-label { font-size: 11px; font-weight: 600; letter-spacing: 0.4px;
   color: var(--dim); text-transform: uppercase; }
+/* Settings: credentials note + inline help marker */
+.ck-cred-note { font-size: 11.5px; color: var(--faint); margin: 8px 0 12px; line-height: 1.5; }
+.ck-info { cursor: help; color: var(--faint); font-size: 11px; }
+.ck-info:hover { color: var(--dim); }
 .ck-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
 .ck-metric { background: var(--surface); border: 1px solid var(--border); border-radius: 11px;
   padding: 13px 14px; }

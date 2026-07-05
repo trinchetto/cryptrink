@@ -32,6 +32,7 @@ from cryptrink.portfolio.storage import (
 )
 from cryptrink.web import charts, components
 from cryptrink.web.state import get_runtime, log_event
+from cryptrink.web.tabs import backtest
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -380,3 +381,10 @@ def render() -> None:
         inputs=[editor, start_input, end_input],
         outputs=[metrics_output, equity_output, breakdown_output, trades_output],
     )
+
+    # Single-pair backtest + tuning/optimizer (which also carries the Suggest section) is a
+    # subset of portfolio design — you reach for it to optimize one pair on its own. It folds
+    # in here as a collapsed section rather than a top-level screen; ``backtest.render`` wires
+    # its own handlers.
+    with gr.Accordion("Optimize a single pair", open=False):
+        backtest.render()
