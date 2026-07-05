@@ -42,31 +42,20 @@ class NavItem:
     label: str
 
 
-@dataclass(frozen=True)
-class NavGroup:
-    """A labelled workflow group of sidebar items."""
-
-    label: str
-    items: tuple[NavItem, ...]
-
-
-# The three sections in dependency-pipeline order: Data (the fuel) → Portfolio design
-# (build & validate strategies/portfolios) → Live (run them). Suggest folds into the
-# Backtest screen and Dashboard folds into Live (both stacked sections), so neither has
-# its own sidebar entry. Settings is reached via the header gear, not the sidebar, so it
-# is absent here — see ``SCREEN_ORDER``.
-NAV_GROUPS: tuple[NavGroup, ...] = (
-    NavGroup("Data", (NavItem("data", "DT", "Data"),)),
-    NavGroup(
-        "Portfolio design",
-        (NavItem("backtest", "BT", "Backtest"), NavItem("portfolio", "PF", "Portfolio")),
-    ),
-    NavGroup("Live", (NavItem("live", "LV", "Live"),)),
+# The three sections, flat (no workflow grouping), in dependency-pipeline order: Data
+# (the fuel) → Portfolio Design (build & validate strategies/portfolios; the single-pair
+# Backtest optimizer folds in here as a collapsed section) → Live Execution (run them).
+# Settings is reached via the header gear, not the sidebar, so it is absent here — see
+# ``SCREEN_ORDER``.
+NAV_ITEMS: tuple[NavItem, ...] = (
+    NavItem("data", "DT", "Data Management"),
+    NavItem("portfolio", "PF", "Portfolio Design"),
+    NavItem("live", "LV", "Live Execution"),
 )
 
 # Sidebar-visible screens, top-to-bottom. Drives the nav-button rendering and the
 # active-item highlight (only these screens get a sidebar button).
-NAV_KEYS: list[str] = [item.key for group in NAV_GROUPS for item in group.items]
+NAV_KEYS: list[str] = [item.key for item in NAV_ITEMS]
 
 # Every mounted panel, in visibility-toggle order: the sidebar screens plus Settings,
 # which is a real panel reached from the header gear rather than a sidebar entry.
@@ -75,31 +64,27 @@ SCREEN_ORDER: list[str] = [*NAV_KEYS, "settings"]
 # Default screen shown on boot (the main design workspace).
 DEFAULT_SCREEN = "portfolio"
 
-# title + subtitle for the sticky screen header, verbatim from the prototype.
+# title + subtitle for the sticky screen header.
 SCREEN_META: dict[str, tuple[str, str]] = {
-    "backtest": (
-        "Backtest",
-        "Replay a single strategy over a stored dataset. Tune by hand or sweep with the optimizer.",
-    ),
-    "portfolio": (
-        "Portfolio",
-        "Build a multi-pair portfolio sharing one cash pool, then backtest the whole "
-        "allocation in one run.",
-    ),
-    "live": (
-        "Live trading",
-        "Run a strategy on a periodic interval against Revolut X. Paper replays locally; "
-        "live places real orders.",
-    ),
     "data": (
-        "Data",
+        "Data Management",
         "Historical OHLCV the research and trading engines read from. Backfilled from "
         "Revolut X and auto-synced on startup.",
     ),
+    "portfolio": (
+        "Portfolio Design",
+        "Build a multi-pair portfolio sharing one cash pool, then backtest the whole "
+        "allocation in one run. Open 'Optimize a single pair' to tune one pair on its own.",
+    ),
+    "live": (
+        "Live Execution",
+        "Run a strategy on a periodic interval against Revolut X. Paper replays locally; "
+        "live places real orders.",
+    ),
     "settings": (
         "Settings",
-        "Connection and default risk limits. The knobs that rarely change "
-        "live here, out of the workflow.",
+        "Connections & credentials for the external systems Cryptrink talks to. "
+        "Read-only — values come from environment / Space secrets.",
     ),
 }
 
@@ -418,14 +403,13 @@ def build_workspace(
         screen_timers: dict[str, list[gr.Timer]] = {}
         with gr.Row(elem_classes=["ck-body"]):
             with gr.Column(elem_classes=["ck-sidebar"], scale=0):
-                for group in NAV_GROUPS:
-                    gr.HTML(f'<div class="ck-nav-group-label">{group.label}</div>')
-                    for item in group.items:
-                        nav_buttons[item.key] = gr.Button(
-                            item.label,
-                            elem_id=f"ck-nav-{item.key}",
-                            elem_classes=_nav_classes(item.key == DEFAULT_SCREEN),
-                        )
+                # Flat, ungrouped nav — three top-level sections, no group labels.
+                for item in NAV_ITEMS:
+                    nav_buttons[item.key] = gr.Button(
+                        item.label,
+                        elem_id=f"ck-nav-{item.key}",
+                        elem_classes=_nav_classes(item.key == DEFAULT_SCREEN),
+                    )
             with gr.Column(elem_classes=["ck-main"]):
                 screen_header = gr.HTML(
                     screen_header_html(DEFAULT_SCREEN, None), elem_id="ck-screen-header"

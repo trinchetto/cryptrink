@@ -33,27 +33,33 @@ class TestTheme:
 
 
 class TestNavModel:
-    def test_group_labels(self):
+    def test_nav_items_are_flat_three_sections(self):
         from cryptrink.web import shell
 
-        # Three sections in dependency-pipeline order: Data → Portfolio design → Live.
-        # Settings is reached via the header gear, so it is not a sidebar group.
-        assert [g.label for g in shell.NAV_GROUPS] == ["Data", "Portfolio design", "Live"]
+        # Flat, ungrouped nav — three top-level sections in pipeline order.
+        assert [item.key for item in shell.NAV_ITEMS] == ["data", "portfolio", "live"]
+        assert [item.label for item in shell.NAV_ITEMS] == [
+            "Data Management",
+            "Portfolio Design",
+            "Live Execution",
+        ]
 
-    def test_nav_keys_exclude_settings(self):
+    def test_nav_keys_exclude_settings_and_backtest(self):
         from cryptrink.web import shell
 
-        # Only sidebar-visible screens get nav buttons; Settings is header-gear only.
-        assert shell.NAV_KEYS == ["data", "backtest", "portfolio", "live"]
+        # Only sidebar-visible screens get nav buttons; Settings is header-gear only and
+        # Backtest folds into Portfolio Design (no standalone screen).
+        assert shell.NAV_KEYS == ["data", "portfolio", "live"]
         assert "settings" not in shell.NAV_KEYS
+        assert "backtest" not in shell.NAV_KEYS
 
     def test_screen_order_has_all_panels_settings_last(self):
         from cryptrink.web import shell
 
         # Every mounted panel, in pipeline order, with the gear-only Settings panel last.
+        # Backtest is not a panel anymore — it renders inside the Portfolio Design screen.
         assert shell.SCREEN_ORDER == [
             "data",
-            "backtest",
             "portfolio",
             "live",
             "settings",
