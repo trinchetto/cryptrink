@@ -36,18 +36,26 @@ class TestNavModel:
     def test_group_labels(self):
         from cryptrink.web import shell
 
-        # Suggest folded into Backtest and Dashboard into Live (pass 4), so the
-        # "Monitor" group is gone and neither has its own sidebar entry.
-        assert [g.label for g in shell.NAV_GROUPS] == ["Research", "Trade", "System"]
+        # Three sections in dependency-pipeline order: Data → Portfolio design → Live.
+        # Settings is reached via the header gear, so it is not a sidebar group.
+        assert [g.label for g in shell.NAV_GROUPS] == ["Data", "Portfolio design", "Live"]
 
-    def test_screen_order_matches_prototype(self):
+    def test_nav_keys_exclude_settings(self):
         from cryptrink.web import shell
 
+        # Only sidebar-visible screens get nav buttons; Settings is header-gear only.
+        assert shell.NAV_KEYS == ["data", "backtest", "portfolio", "live"]
+        assert "settings" not in shell.NAV_KEYS
+
+    def test_screen_order_has_all_panels_settings_last(self):
+        from cryptrink.web import shell
+
+        # Every mounted panel, in pipeline order, with the gear-only Settings panel last.
         assert shell.SCREEN_ORDER == [
+            "data",
             "backtest",
             "portfolio",
             "live",
-            "data",
             "settings",
         ]
 

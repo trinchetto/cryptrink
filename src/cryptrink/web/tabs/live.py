@@ -71,6 +71,24 @@ def _build_discord_callback(
     return callback
 
 
+async def test_discord() -> object:
+    """Send a synthetic Discord embed via the configured webhook and surface the result.
+
+    Bypasses the notifier's ``enabled`` flag (the operator explicitly asked to test) and
+    reports the HTTP status/body so a misconfigured webhook is diagnosable rather than
+    silently dropped. Also mirrors the outcome into the docked terminal.
+    """
+    from cryptrink.notifications.discord import DiscordNotifier
+
+    notifications = get_runtime().settings.notifications
+    webhook = notifications.discord_webhook_url.get_secret_value()
+    notifier = DiscordNotifier(webhook, enabled=notifications.discord_enabled)
+    result = await notifier.send_test()
+    log_event("live", "ok" if result.ok else "err", f"Discord test: {result.detail}")
+    icon = "✅" if result.ok else "⚠️"
+    return gr.update(value=f"{icon} **Discord test** — {result.detail}", visible=True)
+
+
 async def refresh_datasets(current: str | None) -> object:
     """Re-query the OHLCV table and update this screen's Dataset dropdown."""
     choices = await dataset_choices()
@@ -549,6 +567,11 @@ def render() -> list[gr.Timer]:
                         minimum=10,
                         interactive=discord_configured,
                     )
+                    test_discord_btn = gr.Button(
+                        "Test Discord",
+                        elem_classes=["ck-btn-secondary"],
+                        interactive=discord_configured,
+                    )
                 with gr.Row():
                     start_btn = gr.Button("Start", elem_classes=["ck-btn-primary"])
                     stop_btn = gr.Button("Stop", elem_classes=["ck-btn-stop"])
@@ -601,6 +624,10 @@ def render() -> list[gr.Timer]:
         js=_START_CONFIRM_JS,
     )
     stop_btn.click(fn=stop_loop, inputs=[], outputs=[activity_output, status_output])
+
+    # Test Discord: fire a synthetic embed and report the webhook's actual response in the
+    # diagnostics area. Non-interactive (so unclickable) unless Discord is configured.
+    test_discord_btn.click(fn=test_discord, inputs=[], outputs=[diag_output])
 
     if creds_present:
         test_btn.click(fn=test_connection, inputs=[dataset_input], outputs=[diag_output]).then(

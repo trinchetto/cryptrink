@@ -309,9 +309,9 @@ class RevolutXSettings(BaseSettings):
 | `get_recent_trades()` | `GET /trades/all/{symbol}` | ✅ Implemented |
 | `get_open_orders()` | `GET /orders/active` | ✅ Implemented |
 | `get_order_history()` | `GET /orders/historical` | ✅ Implemented |
-| `get_order()` | Not implemented | ⏸️ Pending |
-| `create_order()` | Not implemented | ⏸️ Pending |
-| `cancel_order()` | Not implemented | ⏸️ Pending |
+| `get_order()` | `GET /orders/{order_id}` | ✅ Implemented |
+| `create_order()` | `POST /orders` | ✅ Implemented |
+| `cancel_order()` | `DELETE /orders/{order_id}` | ✅ Implemented |
 
 ## Test Results
 
