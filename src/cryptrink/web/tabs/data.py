@@ -6,18 +6,18 @@ The Backtest, Suggest, and Live tabs all read from the OHLCV table, so
 this is the entry point for "I want real backtests, not the synthetic
 seed".
 
-UX: every action — backfill, wipe, refresh symbols, count, overview —
-emits one or more lines into a shared terminal-style log at the bottom
-of the tab. There are no per-section status panels; the running log is
-the only output the operator needs to read. Backfill streams page-by-page
-progress; everything else logs a Started / Completed pair so the operator
-can see when a long DB op finishes.
+UX: every action — backfill, delete a dataset, reset — emits one or
+more lines into a shared terminal-style log at the bottom of the tab.
+There are no per-section status panels; the running log is the only
+output the operator needs to read. Backfill streams page-by-page
+progress; everything else logs a Started / Completed pair so the
+operator can see when a long DB op finishes.
 
 The Symbol input is a Dropdown sourced from
-:func:`cryptrink.web.state.get_symbol_choices`, populated by the
-"Refresh symbols from Revolut X" button via ``/configuration/pairs``.
-Other tabs read the same cache so a refresh + page reload propagates
-the live vocabulary.
+:func:`cryptrink.web.state.get_symbol_choices`, auto-refreshed from
+``/configuration/pairs`` every time this screen becomes visible. Other
+tabs read the same cache so switching to this screen + a page reload
+propagates the live vocabulary.
 """
 
 from __future__ import annotations
@@ -39,9 +39,9 @@ from cryptrink.web.live_setup import has_revolutx_credentials
 from cryptrink.web.state import (
     default_symbol,
     flush_runtime,
+    get_active_screen,
     get_runtime,
     get_symbol_choices,
-    list_datasets,
     list_datasets_sync,
     log_event,
     set_cached_symbols,
@@ -117,12 +117,6 @@ def _render_terminal() -> str:
     if not _LOG:
         return "```\n(empty terminal — click any button to log activity)\n```"
     return "```\n" + "\n".join(_LOG) + "\n```"
-
-
-def clear_log() -> str:
-    """Wipe the shared log buffer. Used by the Clear button."""
-    _LOG.clear()
-    return _render_terminal()
 
 
 def _emit_failure(message: str, exc: Exception | None = None) -> str:
@@ -424,104 +418,6 @@ async def wipe(symbol: str, timeframe: str) -> str:
     )
 
 
-async def refresh_counts(symbol: str, timeframe: str) -> str:
-    """Log how many candles are persisted for ``(symbol, timeframe)``."""
-    if not symbol:
-        return _emit_failure("count: symbol is empty")
-    _emit(f"count: starting for {symbol} {timeframe}")
-    runtime = get_runtime()
-    started = time.perf_counter()
-    await init_db_schema(runtime.session_factory)
-    total = await _stored_count(symbol, timeframe)
-    return _emit(
-        f"count: COMPLETE — {total} candles for {symbol} {timeframe} ({_format_elapsed(started)})"
-    )
-
-
-async def db_diagnostics() -> str:
-    """Dump SQLite PRAGMAs + file metadata + per-pair row counts.
-
-    Useful when the operator suspects data has been silently lost
-    across restarts (typically due to HF Storage Bucket replication
-    timing or out-of-band file corruption). The output explicitly
-    lists journal mode, sync setting, page accounting, and any sidecar
-    files (.db-wal, .db-shm, .db-journal) that might hold uncommitted
-    state.
-    """
-    _emit("diagnostics: starting")
-    runtime = get_runtime()
-    started = time.perf_counter()
-    await init_db_schema(runtime.session_factory)
-
-    db_url = runtime.settings.database.url
-    path = _sqlite_file_path(db_url)
-
-    # --- PRAGMAs ------------------------------------------------------
-    pragma_keys = [
-        "journal_mode",
-        "synchronous",
-        "auto_vacuum",
-        "page_size",
-        "page_count",
-        "freelist_count",
-        "wal_autocheckpoint",
-        "user_version",
-    ]
-    async with runtime.session_factory() as session:
-        from sqlalchemy import text
-
-        for key in pragma_keys:
-            try:
-                result = await session.execute(text(f"PRAGMA {key}"))
-                row = result.first()
-                value = row[0] if row else "<none>"
-            except Exception as exc:
-                value = f"<error: {type(exc).__name__}: {exc}>"
-            _emit(f"  PRAGMA {key} = {value}")
-
-    # --- File + sidecar accounting -----------------------------------
-    if path is not None:
-        if path.exists():
-            size_mb = path.stat().st_size / (1024 * 1024)
-            _emit(f"  main db: `{path}` is {size_mb:.2f} MB")
-        else:
-            _emit(f"  main db: `{path}` does not exist")
-        for suffix, label in (
-            ("-wal", "WAL log"),
-            ("-shm", "shared-memory index"),
-            ("-journal", "rollback journal"),
-        ):
-            sidecar = Path(str(path) + suffix)
-            # Sync filesystem stat in an async ctx is fine for a one-shot
-            # diagnostic that touches at most three files on local disk.
-            if sidecar.exists():  # noqa: ASYNC240
-                sc_size_mb = sidecar.stat().st_size / (1024 * 1024)  # noqa: ASYNC240
-                _emit(
-                    f"  {label}: `{sidecar.name}` is {sc_size_mb:.2f} MB "
-                    "— uncommitted state may live here"
-                )
-    else:
-        _emit(f"  db url is {db_url} (not a sqlite file)")
-
-    # --- Row counts (the operator's actual question) -----------------
-    # Reuse the shared summary query (state.list_datasets) rather than repeating
-    # the GROUP BY here; Dataset already parses the epoch-ms bounds to datetimes.
-    datasets = await list_datasets()
-    if not datasets:
-        _emit("  ohlcv: 0 (symbol, timeframe) groups")
-    else:
-        _emit(f"  ohlcv: {len(datasets)} (symbol, timeframe) groups")
-        for ds in datasets:
-            _emit(
-                f"    {ds.symbol:<10} {ds.timeframe:<4} "
-                f"{ds.candle_count:>6} candles  "
-                f"{ds.earliest.isoformat(timespec='seconds')} → "
-                f"{ds.latest.isoformat(timespec='seconds')}"
-            )
-
-    return _emit(f"diagnostics: COMPLETE in {_format_elapsed(started)}")
-
-
 async def reset_database() -> str:
     """Delete the SQLite file and reinitialise the schema from scratch.
 
@@ -575,80 +471,6 @@ async def reset_database() -> str:
 
     return _emit(
         f"reset: COMPLETE in {_format_elapsed(started)} "
-        f"({_format_db_size(runtime.settings.database.url)})"
-    )
-
-
-async def force_checkpoint() -> str:
-    """Force-flush any pending SQLite state to the main .db file.
-
-    Defensive button for HF Spaces where the Storage Bucket may
-    asynchronously replicate the mount: clicking this before manually
-    restarting the Space increases the chance that all written rows
-    are durable in the bucket. Calls ``PRAGMA wal_checkpoint(FULL)``
-    (no-op when not in WAL mode) and ``PRAGMA optimize`` so the file
-    layout is in a clean state.
-    """
-    _emit("checkpoint: starting")
-    runtime = get_runtime()
-    started = time.perf_counter()
-    await init_db_schema(runtime.session_factory)
-
-    async with runtime.session_factory() as session:
-        from sqlalchemy import text
-
-        for cmd in ("PRAGMA wal_checkpoint(FULL)", "PRAGMA optimize"):
-            try:
-                await session.execute(text(cmd))
-                _emit(f"  ran {cmd}")
-            except Exception as exc:
-                _emit(f"  {cmd} failed: {type(exc).__name__}: {exc}")
-        await session.commit()
-
-    return _emit(
-        f"checkpoint: COMPLETE in {_format_elapsed(started)} "
-        f"({_format_db_size(runtime.settings.database.url)})"
-    )
-
-
-async def database_overview() -> str:
-    """Log a per-(symbol, timeframe) summary plus DB file size."""
-    _emit("overview: starting")
-    runtime = get_runtime()
-    started = time.perf_counter()
-    await init_db_schema(runtime.session_factory)
-
-    async with runtime.session_factory() as session:
-        stmt = (
-            select(
-                OHLCVModel.symbol,
-                OHLCVModel.timeframe,
-                func.count().label("candle_count"),
-                func.min(OHLCVModel.timestamp).label("earliest"),
-                func.max(OHLCVModel.timestamp).label("latest"),
-            )
-            .group_by(OHLCVModel.symbol, OHLCVModel.timeframe)
-            .order_by(OHLCVModel.symbol, OHLCVModel.timeframe)
-        )
-        result = await session.execute(stmt)
-        rows = list(result.all())
-
-    if not rows:
-        _emit("overview: 0 (symbol, timeframe) groups in the OHLCV table")
-    else:
-        _emit(f"overview: {len(rows)} (symbol, timeframe) groups")
-        for row in rows:
-            earliest = datetime.fromtimestamp(int(row.earliest) / 1000, tz=UTC)
-            latest = datetime.fromtimestamp(int(row.latest) / 1000, tz=UTC)
-            _emit(
-                f"  {row.symbol:<10} {row.timeframe:<4} "
-                f"{int(row.candle_count):>6} candles  "
-                f"{earliest.isoformat(timespec='seconds')} → "
-                f"{latest.isoformat(timespec='seconds')}"
-            )
-
-    return _emit(
-        f"overview: COMPLETE in {_format_elapsed(started)} "
         f"({_format_db_size(runtime.settings.database.url)})"
     )
 
@@ -722,15 +544,23 @@ def _stored_datasets_df() -> pd.DataFrame:
     return pd.DataFrame(rows, columns=columns)
 
 
-def render() -> None:
-    """Render the Data tab UI with a single shared terminal output."""
+_NO_SELECTION_LABEL = "_Click a row above to select a dataset to delete._"
+
+
+def render() -> list[gr.Timer]:
+    """Render the Data tab UI: Stored datasets, Backfill, then Advanced.
+
+    Returns the screen-owned entry timer so the shell can gate it active only
+    while this screen is visible (see :func:`_on_data_shown`).
+    """
     runtime = get_runtime()
     creds_present = has_revolutx_credentials(runtime.settings)
     cred_hint = (
-        "_Revolut X credentials detected — the Backfill and Refresh buttons will hit the live API._"
+        "_Revolut X credentials detected — Backfill and the symbol auto-refresh will hit "
+        "the live API._"
         if creds_present
-        else "_Revolut X credentials missing; Backfill and Refresh will log an "
-        "error until you configure them._"
+        else "_Revolut X credentials missing; Backfill and the symbol auto-refresh will "
+        "log an error until you configure them._"
     )
 
     # Seed the terminal with a one-time boot summary so the operator sees
@@ -738,12 +568,30 @@ def render() -> None:
     if not _LOG:
         _emit(f"boot: {_format_db_size(runtime.settings.database.url)}")
 
-    with gr.Row(elem_classes=["ck-screen-cols"]):
-        # ---- left: backfill configuration ----
-        with (
-            gr.Column(scale=0, elem_classes=["ck-col-300"]),
-            gr.Group(elem_classes=["ck-card"]),
-        ):
+    with gr.Row(elem_classes=["ck-screen-cols"]), gr.Column(elem_classes=["ck-col-main"]):
+        # ---- 1: stored datasets (+ per-row delete) ----
+        with gr.Group(elem_classes=["ck-card"]):
+            gr.HTML('<div class="ck-card-title">Stored datasets</div>')
+            gr.Markdown(
+                "Auto-synced on startup. Revolut X's `/candles` endpoint keeps "
+                "short timeframes (1m, 5m, 15m) for only a limited window — "
+                "expect 1m to cover the most recent ~28 days. For longer "
+                "history, use a coarser timeframe (1h, 4h, 1d)."
+            )
+            datasets_df = gr.Dataframe(value=_stored_datasets_df())
+            selected_symbol = gr.Textbox(visible=False)
+            selected_timeframe = gr.Textbox(visible=False)
+            with gr.Row():
+                selected_label = gr.Markdown(_NO_SELECTION_LABEL)
+                delete_selected_btn = gr.Button(
+                    "Delete selected dataset",
+                    elem_classes=["ck-btn-stop"],
+                    interactive=False,
+                    scale=0,
+                )
+
+        # ---- 2: backfill configuration ----
+        with gr.Group(elem_classes=["ck-card"]):
             gr.HTML('<div class="ck-section-label">Backfill</div>')
             symbol_input = gr.Dropdown(
                 choices=get_symbol_choices(),
@@ -761,44 +609,19 @@ def render() -> None:
             backfill_btn = gr.Button("Backfill", elem_classes=["ck-btn-primary"])
             gr.Markdown(cred_hint)
 
-        # ---- right: stored datasets + maintenance ----
-        with gr.Column(elem_classes=["ck-col-main"]):
-            with gr.Group(elem_classes=["ck-card"]):
-                gr.HTML('<div class="ck-card-title">Stored datasets</div>')
-                gr.Markdown(
-                    "Auto-synced on startup. Revolut X's `/candles` endpoint keeps "
-                    "short timeframes (1m, 5m, 15m) for only a limited window — "
-                    "expect 1m to cover the most recent ~28 days. For longer "
-                    "history, use a coarser timeframe (1h, 4h, 1d)."
-                )
-                datasets_df = gr.Dataframe(value=_stored_datasets_df())
+        # ---- 3: advanced — the one truly destructive, whole-database action ----
+        with gr.Accordion("Advanced", open=False):
+            gr.Markdown(
+                "Deletes the entire database file. Gated behind a browser confirm "
+                "dialog. To remove a single dataset instead, select its row above."
+            )
+            reset_btn = gr.Button(
+                "Reset database (corruption recovery)", elem_classes=["ck-btn-stop"]
+            )
 
-            with gr.Accordion("Advanced", open=False):
-                gr.Markdown(
-                    "Maintenance operations. Wipe and Reset are destructive and "
-                    "gated behind a browser confirm dialog."
-                )
-                with gr.Row():
-                    count_btn = gr.Button("Count selected pair", elem_classes=["ck-btn-secondary"])
-                    overview_btn = gr.Button("Database overview", elem_classes=["ck-btn-secondary"])
-                    refresh_symbols_btn = gr.Button(
-                        "Refresh symbols", elem_classes=["ck-btn-secondary"]
-                    )
-                with gr.Row():
-                    diagnostics_btn = gr.Button("DB diagnostics", elem_classes=["ck-btn-secondary"])
-                    checkpoint_btn = gr.Button(
-                        "Force checkpoint", elem_classes=["ck-btn-secondary"]
-                    )
-                    clear_btn = gr.Button("Clear log", elem_classes=["ck-btn-secondary"])
-                with gr.Row():
-                    wipe_btn = gr.Button("Wipe (with confirm)", elem_classes=["ck-btn-stop"])
-                    reset_btn = gr.Button(
-                        "Reset database (corruption recovery)", elem_classes=["ck-btn-stop"]
-                    )
-
-    # ``backfill`` and the maintenance handlers still return the rendered
-    # per-tab terminal markdown; route it into a hidden component so they
-    # have a sink while the visible log lives in the shared docked terminal.
+    # ``backfill``/``wipe``/``reset_database`` still return the rendered per-tab
+    # terminal markdown; route it into a hidden component so they have a sink
+    # while the visible log lives in the shared docked terminal.
     terminal = gr.Markdown(value=_render_terminal(), visible=False)
 
     # Backfill writes new rows — refresh the Stored-datasets table once the
@@ -809,31 +632,62 @@ def render() -> None:
         inputs=[symbol_input, timeframe_input, start_input, end_input],
         outputs=[terminal],
     ).then(fn=_stored_datasets_df, inputs=[], outputs=[datasets_df])
-    count_btn.click(
-        fn=refresh_counts,
-        inputs=[symbol_input, timeframe_input],
-        outputs=[terminal],
-    )
-    overview_btn.click(fn=database_overview, inputs=[], outputs=[terminal]).then(
-        fn=_stored_datasets_df, inputs=[], outputs=[datasets_df]
-    )
-    refresh_symbols_btn.click(
-        fn=refresh_symbols,
-        inputs=[symbol_input],
-        outputs=[symbol_input, terminal],
-    )
-    wipe_btn.click(
-        fn=wipe,
-        inputs=[symbol_input, timeframe_input],
-        outputs=[terminal],
-        js=_WIPE_CONFIRM_JS,
-    ).then(fn=_stored_datasets_df, inputs=[], outputs=[datasets_df])
-    clear_btn.click(fn=clear_log, inputs=[], outputs=[terminal])
-    diagnostics_btn.click(fn=db_diagnostics, inputs=[], outputs=[terminal])
-    checkpoint_btn.click(fn=force_checkpoint, inputs=[], outputs=[terminal])
     reset_btn.click(
         fn=reset_database,
         inputs=[],
         outputs=[terminal],
         js=_RESET_CONFIRM_JS,
     ).then(fn=_stored_datasets_df, inputs=[], outputs=[datasets_df])
+
+    # ---- per-row delete: select a Stored-datasets row, then delete it ----
+    def _on_dataset_row_select(evt: gr.SelectData) -> tuple[str, str, dict[str, Any], str]:
+        if not evt.row_value:
+            return "", "", gr.update(interactive=False), _NO_SELECTION_LABEL
+        symbol, timeframe = str(evt.row_value[0]), str(evt.row_value[1])
+        return (
+            symbol,
+            timeframe,
+            gr.update(interactive=True),
+            f"Selected: **{symbol} @ {timeframe}**",
+        )
+
+    datasets_df.select(
+        fn=_on_dataset_row_select,
+        inputs=[],
+        outputs=[selected_symbol, selected_timeframe, delete_selected_btn, selected_label],
+    )
+
+    def _reset_selection() -> tuple[str, str, dict[str, Any], str]:
+        return "", "", gr.update(interactive=False), _NO_SELECTION_LABEL
+
+    delete_selected_btn.click(
+        fn=wipe,
+        inputs=[selected_symbol, selected_timeframe],
+        outputs=[terminal],
+        js=_WIPE_CONFIRM_JS,
+    ).then(fn=_stored_datasets_df, inputs=[], outputs=[datasets_df]).then(
+        fn=_reset_selection,
+        inputs=[],
+        outputs=[selected_symbol, selected_timeframe, delete_selected_btn, selected_label],
+    )
+
+    # ---- auto-refresh symbols once, every time this screen becomes visible ----
+    # A self-deactivating Timer: the shell reactivates it (active=True) on every
+    # nav click to "data" (see shell.py's ``_make_select``); the first tick fires
+    # the refresh then flips itself back off, so it refreshes once per visit
+    # rather than polling on an interval while the screen stays open.
+    entry_timer = gr.Timer(0.3, active=False)
+
+    async def _on_data_shown(current_symbol: str) -> tuple[object, object, object]:
+        if get_active_screen() != "data":
+            return gr.update(), gr.update(), gr.update()
+        symbol_update, log_update = await refresh_symbols(current_symbol)
+        return symbol_update, log_update, gr.update(active=False)
+
+    entry_timer.tick(
+        fn=_on_data_shown,
+        inputs=[symbol_input],
+        outputs=[symbol_input, terminal, entry_timer],
+    )
+
+    return [entry_timer]
