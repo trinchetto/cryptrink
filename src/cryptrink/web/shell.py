@@ -73,8 +73,8 @@ SCREEN_META: dict[str, tuple[str, str]] = {
     ),
     "portfolio": (
         "Portfolio Design",
-        "Build a multi-pair portfolio sharing one cash pool, then backtest the whole "
-        "allocation in one run. Open 'Optimize a single pair' to tune one pair on its own.",
+        "Compose a multi-pair portfolio and backtest it. Tune each pair's strategy below "
+        "and add it straight into the allocation — no hand-copying tuned params.",
     ),
     "live": (
         "Live Execution",

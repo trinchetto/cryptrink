@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import time
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
@@ -82,6 +83,22 @@ if TYPE_CHECKING:
 # place that has access to the live ``gr.Group`` instances.
 _manual_panels: dict[str, ManualPanel] = {}
 _tuning_panels: dict[str, TuningPanel] = {}
+
+
+@dataclass
+class BacktestHandle:
+    """Handle to the Backtest section's live components, returned by :func:`render`.
+
+    The Portfolio Design screen embeds ``render()`` as its "Tune a pair" stage and
+    needs to read the currently-configured strategy / dataset / manual parameters to
+    upsert the pair into the portfolio. Exposing these (rather than keeping them local)
+    is the whole coupling — the Backtest section stays otherwise self-contained.
+    """
+
+    strategy_input: gr.Dropdown
+    dataset_input: gr.Dropdown
+    manual_components: list[gr.Component]
+    manual_panels: dict[str, ManualPanel]
 
 
 # ----------------------------------------------------------------------
@@ -648,8 +665,13 @@ def _trades_dataframe(result: BacktestResult) -> pd.DataFrame:
 # ----------------------------------------------------------------------
 
 
-def render() -> None:
-    """Render the Backtest tab UI inside an enclosing :class:`gr.Tabs`."""
+def render() -> BacktestHandle:
+    """Render the Backtest tab UI inside an enclosing :class:`gr.Tabs`.
+
+    Returns a :class:`BacktestHandle` so an embedding screen (Portfolio Design) can
+    read the current strategy / dataset / manual parameters to add the pair to a
+    portfolio. Standalone callers can ignore the return value.
+    """
     runtime = get_runtime()
     # ``ensure_builtins_registered`` runs from the runtime, but resolve_strategy
     # is the lazier path; the Backtest tab is mounted after the runtime is
@@ -860,3 +882,10 @@ def render() -> None:
     # UI simplification): it shares the same strategy/dataset mental model and is a
     # lightweight one-shot companion to a full backtest.
     suggest.render_section()
+
+    return BacktestHandle(
+        strategy_input=strategy_input,
+        dataset_input=dataset_input,
+        manual_components=manual_components,
+        manual_panels=_manual_panels,
+    )

@@ -1,9 +1,14 @@
 """Portfolio screen for the Cryptrink workspace UI.
 
-Build a multi-pair portfolio sharing one cash pool and backtest the whole
-allocation in one run. Allocations are edited as YAML (the source of truth on
-disk under ``data/portfolios/``); the run streams an interactive aggregate
-equity curve, a 4-up metrics row, and a per-allocation breakdown table.
+A two-stage pipeline:
+
+1. **Compose & backtest** — build a multi-pair portfolio sharing one cash pool and
+   backtest the whole allocation in one run. Allocations are edited as YAML (the
+   source of truth on disk under ``data/portfolios/``); the run streams an interactive
+   aggregate equity curve, a 4-up metrics row, and a per-allocation breakdown table.
+2. **Tune a pair** — the single-pair backtest + optimizer folds in here; ``Add pair to
+   portfolio`` upserts the tuned ``(symbol, strategy, params)`` into the Allocations
+   above (see :func:`upsert_allocation_yaml`), so you never hand-copy tuned numbers.
 
 Activity is pushed to the shared docked terminal via
 :func:`cryptrink.web.state.log_event` rather than a per-screen log box.
@@ -13,6 +18,7 @@ from __future__ import annotations
 
 import time
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 import gradio as gr
@@ -23,7 +29,13 @@ from cryptrink.data.storage import OHLCV as OHLCVModel
 from cryptrink.data.storage import OHLCVRepository
 from cryptrink.execution.models import Position
 from cryptrink.portfolio.engine import PortfolioBacktestEngine
-from cryptrink.portfolio.models import dump_yaml, example_portfolio, load_yaml
+from cryptrink.portfolio.models import (
+    Allocation,
+    Portfolio,
+    dump_yaml,
+    example_portfolio,
+    load_yaml,
+)
 from cryptrink.portfolio.storage import (
     delete_portfolio,
     list_portfolio_names,
@@ -31,8 +43,9 @@ from cryptrink.portfolio.storage import (
     save_portfolio,
 )
 from cryptrink.web import charts, components
-from cryptrink.web.state import get_runtime, log_event
+from cryptrink.web.state import Dataset, get_runtime, log_event
 from cryptrink.web.tabs import backtest
+from cryptrink.web.tabs.backtest_tuning import decode_manual_params
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -103,6 +116,66 @@ def delete_portfolio_handler(name: str | None) -> tuple[object, str]:
     new_value = names[0] if names else None
     log_event("portfolio", "info", f"deleted {name!r}")
     return gr.update(choices=names, value=new_value), ""
+
+
+# ----------------------------------------------------------------------
+# Add-pair-to-portfolio (connects the per-pair tuner to the portfolio)
+# ----------------------------------------------------------------------
+
+
+def upsert_allocation_yaml(
+    yaml_text: str,
+    symbol: str,
+    timeframe: str,
+    strategy_name: str,
+    params: dict[str, float | int],
+) -> tuple[str, str | None]:
+    """Upsert one ``(symbol, strategy, params)`` allocation into a portfolio YAML.
+
+    Pure and side-effect free so it can be unit-tested without Gradio. Returns
+    ``(yaml, error)``: on success ``error`` is ``None`` and ``yaml`` is the updated
+    document; on failure ``yaml`` is the unchanged input and ``error`` is an
+    operator-facing message.
+
+    Rules:
+    * Blank editor → start a fresh portfolio that adopts the pair's ``timeframe``.
+    * A portfolio uses a single timeframe: if it already has allocations on a
+      different timeframe, adding a pair on another timeframe is rejected.
+    * One allocation per symbol (mirrors ``Portfolio.validate``): an existing
+      allocation for the same symbol is replaced, otherwise the pair is appended.
+    """
+    text = yaml_text.strip()
+    if not text:
+        portfolio = Portfolio(
+            name="new",
+            timeframe=timeframe,
+            initial_balance=Decimal("10000"),
+            allocations=[],
+        )
+    else:
+        try:
+            portfolio = load_yaml(yaml_text)
+        except Exception as exc:  # operator-facing: surface any YAML/parse error
+            return yaml_text, f"portfolio YAML failed to parse: {exc}"
+
+    if portfolio.allocations and portfolio.timeframe != timeframe:
+        return yaml_text, (
+            f"pair timeframe {timeframe!r} does not match the portfolio's "
+            f"{portfolio.timeframe!r}. A portfolio trades one timeframe — start a new "
+            "portfolio (+ New) to use a different one."
+        )
+    if not portfolio.allocations:
+        portfolio.timeframe = timeframe
+
+    allocation = Allocation(symbol=symbol, strategy_name=strategy_name, params=dict(params))
+    for i, existing in enumerate(portfolio.allocations):
+        if existing.symbol == symbol:
+            portfolio.allocations[i] = allocation
+            break
+    else:
+        portfolio.allocations.append(allocation)
+
+    return dump_yaml(portfolio), None
 
 
 # ----------------------------------------------------------------------
@@ -331,8 +404,10 @@ def render() -> None:
     else:
         initial_yaml = dump_yaml(example_portfolio())
 
+    # ---- Stage 1: compose the portfolio + backtest it (the workbench) ----
+    gr.HTML('<div class="ck-section-label">1 · Compose &amp; backtest your portfolio</div>')
     with gr.Row(elem_classes=["ck-screen-cols"]):
-        # ---- left: portfolio picker + allocations editor ----
+        # left: portfolio picker + allocations editor
         with gr.Column(scale=0, elem_classes=["ck-col-300"]):
             with gr.Group(elem_classes=["ck-card"]):
                 gr.HTML('<div class="ck-section-label">Portfolios</div>')
@@ -348,6 +423,10 @@ def render() -> None:
 
             with gr.Group(elem_classes=["ck-card"]):
                 gr.HTML('<div class="ck-section-label">Allocations (YAML)</div>')
+                gr.Markdown(
+                    "One allocation per pair. Add pairs from **Tune a pair** below, or "
+                    "edit this YAML directly."
+                )
                 editor = gr.Code(value=initial_yaml, language="yaml", lines=16)
                 save_btn = gr.Button("Save to disk", elem_classes=["ck-btn-secondary"])
                 with gr.Row():
@@ -355,7 +434,7 @@ def render() -> None:
                     end_input = gr.Textbox(value="", label="End (blank = now)")
                 run_btn = gr.Button("Run backtest", elem_classes=["ck-btn-primary"])
 
-        # ---- right: metrics + equity + breakdown ----
+        # right: portfolio backtest results
         with gr.Column(elem_classes=["ck-col-main"]):
             metrics_output = gr.HTML(_empty_metrics_html())
             with gr.Group(elem_classes=["ck-card"]):
@@ -366,6 +445,20 @@ def render() -> None:
                 breakdown_output = gr.Dataframe(value=_empty_breakdown_df())
             with gr.Accordion("Closed trades", open=False):
                 trades_output = gr.Dataframe(value=_empty_trades_df())
+
+    # ---- Stage 2: tune one pair's strategy, then add it to the portfolio above ----
+    gr.HTML('<div class="ck-section-label">2 · Tune a pair, then add it to the portfolio</div>')
+    with gr.Accordion("Tune a pair", open=False):
+        gr.Markdown(
+            "Pick a strategy and dataset, tune its parameters (by hand or with the "
+            "optimizer), then **Add pair to portfolio** to drop it into the Allocations "
+            "above. Repeat for each pair you want to trade. The portfolio uses a single "
+            "timeframe — the first pair you add sets it."
+        )
+        add_pair_btn = gr.Button("Add pair to portfolio", elem_classes=["ck-btn-primary"])
+        # The single-pair backtest + optimizer (also carrying Suggest). ``render`` returns
+        # a handle to its strategy/dataset/param components so we can read the tuned pair.
+        handle = backtest.render()
 
     # ---- wiring ----
     portfolio_dropdown.change(fn=load_portfolio_yaml, inputs=[portfolio_dropdown], outputs=[editor])
@@ -382,9 +475,40 @@ def render() -> None:
         outputs=[metrics_output, equity_output, breakdown_output, trades_output],
     )
 
-    # Single-pair backtest + tuning/optimizer (which also carries the Suggest section) is a
-    # subset of portfolio design — you reach for it to optimize one pair on its own. It folds
-    # in here as a collapsed section rather than a top-level screen; ``backtest.render`` wires
-    # its own handlers.
-    with gr.Accordion("Optimize a single pair", open=False):
-        backtest.render()
+    def _on_add_pair(
+        yaml_text: str,
+        strategy_name: str,
+        dataset_value: str,
+        *param_values: object,
+    ) -> object:
+        """Read the tuned pair from the Backtest section and upsert it into the editor."""
+        if not strategy_name:
+            log_event("portfolio", "err", "add pair: no strategy selected")
+            return gr.update()
+        if not dataset_value:
+            log_event("portfolio", "err", "add pair: no dataset selected")
+            return gr.update()
+        try:
+            symbol, timeframe = Dataset.parse(dataset_value)
+        except ValueError:
+            log_event("portfolio", "err", f"add pair: invalid dataset {dataset_value!r}")
+            return gr.update()
+        params = decode_manual_params(strategy_name, param_values, handle.manual_panels)
+        new_yaml, error = upsert_allocation_yaml(
+            yaml_text, symbol, timeframe, strategy_name, params
+        )
+        if error:
+            log_event("portfolio", "err", f"add pair: {error}")
+            return gr.update()
+        log_event(
+            "portfolio",
+            "ok",
+            f"add pair: {symbol} @ {timeframe} · {strategy_name} added to the portfolio",
+        )
+        return new_yaml
+
+    add_pair_btn.click(
+        fn=_on_add_pair,
+        inputs=[editor, handle.strategy_input, handle.dataset_input, *handle.manual_components],
+        outputs=[editor],
+    )
