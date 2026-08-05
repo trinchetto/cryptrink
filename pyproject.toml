@@ -29,7 +29,7 @@ dependencies = [
 
     # Cryptography for Revolut X Ed25519 signing
     "pynacl>=1.5,<2.0",
-    "cryptography>=49.0.0,<50.0",
+    "cryptography>=50.0.0,<51.0",
 
     # Data validation & settings
     # Cap pydantic <=2.12.5: HF's Gradio SDK force-installs gradio[oauth,mcp], and
