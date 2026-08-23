@@ -37,18 +37,18 @@ dependencies = [
     # server, but HF injects the extra anyway, so requirements.txt must stay in that
     # window or the Space build fails to resolve. (Lift when gradio/mcp widens it.)
     "pydantic>=2.11.10,<=2.12.5",
-    "pydantic-settings>=2.6,<3.0",
+    "pydantic-settings>=2.15.0,<3.0",
 
     # Data processing
     "pandas>=2.2,<3.0",
-    "numpy>=2.5.1,<3.0",
+    "numpy>=2.5.2,<3.0",
 
     # Database
-    "sqlalchemy>=2.0.51,<3.0",
+    "sqlalchemy>=2.0.52,<3.0",
     "aiosqlite>=0.20,<1.0",
 
     # CLI
-    "typer>=0.26.8,<1.0",
+    "typer>=0.27.1,<1.0",
     "rich>=13.9,<14.0",
 
     # Logging
@@ -59,11 +59,11 @@ dependencies = [
 
     # Scheduling
     "apscheduler>=3.11.3,<4.0",
-    "python-dotenv (>=1.2.2,<2.0.0)",
+    "python-dotenv (>=1.2.3,<2.0.0)",
 
     # Visualization for backtesting
-    "matplotlib (>=3.11.0,<4.0)",
-    "aiohttp (>=3.14.1,<4.0.0)",
+    "matplotlib (>=3.11.1,<4.0)",
+    "aiohttp (>=3.14.3,<4.0.0)",
 
     # Bayesian optimisation (TPE) for backtest parameter tuning
     "optuna>=4.9.0,<5.0",
@@ -74,18 +74,18 @@ discord = [
     "discord.py>=2.7.1,<3.0",
 ]
 web = [
-    "gradio>=6.19,<7.0",
+    "gradio>=6.25.0,<7.0",
     # gradio's CLI subpackage imports `requests` eagerly during `import gradio`;
     # not declaring it here breaks app.py on a clean install.
     "requests>=2.34.2,<3.0",
     # Interactive equity-curve and candlestick charts in the web UI (gr.Plot).
-    "plotly>=5.24,<7.0",
+    "plotly>=6.9.0,<7.0",
 ]
 all = [
     "discord.py>=2.7.1,<3.0",
-    "gradio>=6.19,<7.0",
+    "gradio>=6.25.0,<7.0",
     "requests>=2.34.2,<3.0",
-    "plotly>=5.24,<7.0",
+    "plotly>=6.9.0,<7.0",
 ]
 
 [project.scripts]
@@ -113,8 +113,8 @@ respx = "^0.23"
 pytest-mock = "^3.14"
 
 # Linting & Formatting
-ruff = "^0.15"
-mypy = "^2.1"
+ruff = "^0.16"
+mypy = "^2.3"
 pre-commit = "^4.6"
 
 # Type stubs
